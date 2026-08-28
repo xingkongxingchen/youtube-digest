@@ -343,10 +343,6 @@ body {
   gap: 10px;
 }
 
-.global-language-control {
-  max-width: 100%;
-}
-
 .transcript-mode-control {
   display: inline-flex;
   align-items: center;
@@ -402,7 +398,20 @@ body {
 .section-title-wrap {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 10px;
+}
+
+.tab-language-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.tab-language-header .section-title {
+  margin-bottom: 0;
 }
 
 .section-title {
@@ -797,9 +806,17 @@ body {
 }
 
 @media (max-width: 390px) {
-  .transcript-header-main {
+  .transcript-header-main,
+  .transcript-section-header,
+  .tab-language-header,
+  .tab-panel[data-panel="notes"] > .section > .section-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .section-title-wrap {
+    width: 100%;
+    flex-wrap: wrap;
   }
 }
 

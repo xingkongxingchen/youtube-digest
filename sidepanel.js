@@ -28,25 +28,39 @@ let currentVideoDuration = 0;
 let isAnalysisLoading = false; // Track if analysis is in progress
 let youtubeTabId = null; // Store the YouTube tab ID for reliable messaging
 let errorAction = null;
+let digestGeneration = 0;
+let analysisGeneration = 0;
+let notesRequestGeneration = 0;
 
 // --- Translation state ---
-// The universal language control supports original content, Chinese, and an
-// aligned bilingual view across Transcript, Overview, and Notes.
+// Each result surface owns its language choice. Choices are persisted per
+// video so changing Transcript never silently changes Overview or Notes.
 let currentTranscriptMode = "original";
 const DISPLAY_LANGUAGE_MODE_KEY = "ytd_display_language_modes_by_video";
 const DISPLAY_LANGUAGE_MODES = new Set(["original", "zh", "bilingual"]);
+const DISPLAY_LANGUAGE_SURFACES = new Set(["transcript", "overview", "notes"]);
+let currentDisplayLanguageModes = {
+  transcript: "original",
+  overview: "original",
+  notes: "original",
+};
 let translationGeneration = 0; // Invalidates responses from older UI modes/videos.
-let translationWorkCount = 0;
+let interfaceTranslationGenerations = { overview: 0, notes: 0 };
+let translationWorkCounts = { transcript: 0, overview: 0, notes: 0 };
 let transcriptScrollObserver = null;
 // Stable keys include the video, source mode, language, and semantic segment ID.
 let transcriptParagraphCache = new Map();
 let interfaceTranslationCache = new Map();
-let interfaceTranslationInFlight = new Set();
+let interfaceTranslationInFlight = new Map();
 let interfaceTranslationFailures = new Set();
 let currentNotes = [];
 let currentNotesFilterVideoId = null;
+let currentNotesOwnerVideoId = null;
+let currentNotesAreLoaded = false;
 const TRANSLATION_MESSAGE_TIMEOUT_MS = 130_000;
 const TRANSLATION_BATCH_SIZE = 3;
+let displayLanguageModeSaveQueue = Promise.resolve();
+let languageModeChangeRevisions = { transcript: 0, overview: 0, notes: 0 };
 
 // --- Transcript search state ---
 // Matches point to visible marks in the active transcript language mode.
@@ -253,7 +267,7 @@ function groupTranscriptEntries(entries, limits = TRANSCRIPT_SEGMENT_LIMITS) {
 // ============================================================
 
 document.addEventListener("DOMContentLoaded", async () => {
-  setTranscriptModeButtons("original");
+  setAllLanguageModeButtons();
   setupEventListeners();
   await evictOldCacheEntries(20);
 
@@ -286,10 +300,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === "noteSaved") {
     // Refresh notes list when a new note is saved
-    const filterAll = document
-      .getElementById("notesFilterAll")
-      ?.classList.contains("active");
-    loadNotes(filterAll ? null : currentVideoId);
+    void loadNotes(getSelectedNotesFilter(currentVideoId));
     sendResponse({ success: true });
   }
   return false;
@@ -423,9 +434,25 @@ function setupEventListeners() {
     ?.addEventListener("click", exportTranscript);
   document.querySelectorAll(".transcript-mode-btn").forEach((button) => {
     button.addEventListener("click", () => {
-      handleDisplayLanguageModeChange(button.dataset.transcriptMode);
+      const surface = button.closest("[data-language-surface]")?.dataset
+        .languageSurface;
+      handleDisplayLanguageModeChange(surface, button.dataset.transcriptMode);
     });
   });
+  document.getElementById("resultsState")?.addEventListener(
+    "click",
+    (event) => {
+      const retry = event.target.closest(".interface-translation-retry-btn");
+      if (!retry) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void retryInterfaceTranslationSegment(
+        retry.dataset.translationSurface,
+        retry.dataset.translationId,
+      );
+    },
+    true,
+  );
   setupTranscriptSearch();
 
   // pagehide also covers closing the side panel without a tab change.
@@ -563,26 +590,54 @@ function extractVideoId(url) {
 // DIGEST PIPELINE
 // ============================================================
 
+function isDigestRequestCurrent(generation, videoId) {
+  return generation === digestGeneration && videoId === currentVideoId;
+}
+
 async function startDigest(videoId, videoUrl) {
   // Check if we already have this video loaded in memory
   if (videoId === currentVideoId && currentAnalysis) {
     showState("results");
+    void dispatchActiveTabWork();
     return;
   }
 
+  const requestGeneration = ++digestGeneration;
   const videoChanged = videoId !== currentVideoId;
 
   // Every video change invalidates observer work and in-flight translations.
   if (videoChanged) {
+    analysisGeneration += 1;
+    notesRequestGeneration += 1;
+    currentNotes = [];
+    currentNotesOwnerVideoId = null;
+    currentNotesAreLoaded = false;
+    currentNotesFilterVideoId = getSelectedNotesFilter(videoId);
+    showNotesLoading();
+    isAnalysisLoading = false;
     translationGeneration += 1;
+    interfaceTranslationGenerations.overview += 1;
+    interfaceTranslationGenerations.notes += 1;
+    DISPLAY_LANGUAGE_SURFACES.forEach((surface) => {
+      translationWorkCounts[surface] = 0;
+      document
+        .getElementById(`${surface}LangSpinner`)
+        ?.classList.remove("visible");
+    });
     if (transcriptScrollObserver) transcriptScrollObserver.disconnect();
     transcriptScrollObserver = null;
     resetTranscriptSearch();
     lastTranscriptScrollTop = 0;
-    pendingTranscriptViewState = await loadTranscriptViewState(videoId);
-    // An unseen video always starts in Original, so opening it never spends
-    // translation tokens. A saved choice is restored only for this video.
-    currentTranscriptMode = await loadDisplayLanguageMode(videoId);
+    const transcriptViewState = await loadTranscriptViewState(videoId);
+    if (requestGeneration !== digestGeneration) return;
+    pendingTranscriptViewState = transcriptViewState;
+    // An unseen video starts with every surface in Original. Returning videos
+    // restore the three choices independently without triggering hidden tabs.
+    await loadAllDisplayLanguageModes(
+      videoId,
+      () => requestGeneration === digestGeneration,
+    );
+    if (requestGeneration !== digestGeneration) return;
     document
       .getElementById("contentArea")
       ?.classList.toggle(
@@ -593,6 +648,7 @@ async function startDigest(videoId, videoUrl) {
 
   // Check cache for this video
   const cached = await loadFromCache(videoId);
+  if (requestGeneration !== digestGeneration) return;
   if (cached) {
     debugLog("Loading from cache:", videoId);
     currentVideoId = videoId;
@@ -637,11 +693,11 @@ async function startDigest(videoId, videoUrl) {
     restorePendingTranscriptViewState(videoId);
 
     // Load notes for this video
-    loadNotes(videoId);
+    void loadNotes(getSelectedNotesFilter(videoId));
 
     // Setup explain feature
     setupExplainFeature();
-    if (currentTranscriptMode !== "original") translateTranscript();
+    void dispatchActiveTabWork();
     return;
   }
 
@@ -668,6 +724,7 @@ async function startDigest(videoId, videoUrl) {
     action: "fetchTranscript",
     videoId: videoId,
   });
+  if (!isDigestRequestCurrent(requestGeneration, videoId)) return;
 
   if (!transcriptResult.success) {
     if (transcriptResult.error === "NO_SUPADATA_KEY") {
@@ -696,14 +753,16 @@ async function startDigest(videoId, videoUrl) {
   restorePendingTranscriptViewState(videoId);
 
   // Load notes for this video
-  loadNotes(videoId);
+  void loadNotes(getSelectedNotesFilter(videoId));
 
   // Setup explain feature for text selection
   setupExplainFeature();
-  if (currentTranscriptMode !== "original") translateTranscript();
+  void dispatchActiveTabWork();
 
   // Save transcript to cache (without analysis)
-  await saveToCache(videoId);
+  if (isDigestRequestCurrent(requestGeneration, videoId)) {
+    await saveToCache(videoId);
+  }
 
   // DON'T run LLM analysis automatically - wait for user to click Overview tab
   // This saves tokens when user just wants to see the transcript
@@ -728,14 +787,19 @@ function renderLocalizedContent(text, surface, id) {
   if (!original) return "";
   const cacheKey = interfaceTranslationCacheKey(surface, id, original);
   const translated = getInterfaceTranslation(surface, id, original);
-  if (currentTranscriptMode === "original") return escapeHtml(original);
+  const mode = getDisplayLanguageMode(surface);
+  if (mode === "original") return escapeHtml(original);
 
+  const failed = interfaceTranslationFailures.has(cacheKey);
   const translation = translated
     ? escapeHtml(translated)
-    : interfaceTranslationFailures.has(cacheKey)
-      ? '<span class="translation-error">Translation unavailable.</span>'
+    : failed
+      ? `<span class="translation-error">Translation unavailable.<button class="translation-retry-btn interface-translation-retry-btn" type="button" data-translation-surface="${escapeHtml(surface)}" data-translation-id="${escapeHtml(id)}">Retry</button></span>`
       : '<span class="translation-pending">Translating...</span>';
-  if (currentTranscriptMode === "bilingual") {
+  if (mode === "bilingual") {
+    return `<span class="localized-copy"><span class="localized-original">${escapeHtml(original)}</span><span class="localized-translation">${translation}</span></span>`;
+  }
+  if (failed) {
     return `<span class="localized-copy"><span class="localized-original">${escapeHtml(original)}</span><span class="localized-translation">${translation}</span></span>`;
   }
   return `<span class="localized-copy"><span class="localized-translation">${translation}</span></span>`;
@@ -744,16 +808,19 @@ function renderLocalizedContent(text, surface, id) {
 function getLocalizedPlainText(text, surface, id) {
   const original = String(text || "");
   const translated = getInterfaceTranslation(surface, id, original);
-  if (currentTranscriptMode === "zh") return translated || original;
-  if (currentTranscriptMode === "bilingual" && translated) {
+  const mode = getDisplayLanguageMode(surface);
+  if (mode === "zh") return translated || original;
+  if (mode === "bilingual" && translated) {
     return `${original}\n\n${translated}`;
   }
   return original;
 }
 
 async function translateInterfaceSegments(surface, segments, rerender) {
-  if (currentTranscriptMode === "original" || !segments.length) return;
-  const generation = translationGeneration;
+  if (getDisplayLanguageMode(surface) === "original" || !segments.length) {
+    return;
+  }
+  const generation = interfaceTranslationGenerations[surface];
   const videoId = currentVideoId;
   const missing = segments
     .filter((segment) => segment.text)
@@ -769,12 +836,14 @@ async function translateInterfaceSegments(surface, segments, rerender) {
       (segment) =>
         !interfaceTranslationCache.has(segment.cacheKey) &&
         !interfaceTranslationFailures.has(segment.cacheKey) &&
-        !interfaceTranslationInFlight.has(segment.cacheKey),
+        interfaceTranslationInFlight.get(segment.cacheKey) !== generation,
     );
   if (!missing.length) return;
 
-  missing.forEach((segment) => interfaceTranslationInFlight.add(segment.cacheKey));
-  setTranslatingSpinner(true);
+  missing.forEach((segment) =>
+    interfaceTranslationInFlight.set(segment.cacheKey, generation),
+  );
+  setTranslatingSpinner(true, surface);
   try {
     for (
       let start = 0;
@@ -798,9 +867,9 @@ async function translateInterfaceSegments(surface, segments, rerender) {
         result = { success: false, error: error.message };
       }
       if (
-        generation !== translationGeneration ||
+        generation !== interfaceTranslationGenerations[surface] ||
         videoId !== currentVideoId ||
-        currentTranscriptMode === "original"
+        getDisplayLanguageMode(surface) === "original"
       ) {
         return;
       }
@@ -822,13 +891,73 @@ async function translateInterfaceSegments(surface, segments, rerender) {
     }
   } catch (error) {
     console.error("[YouTube Digest] Interface translation error:", error);
+    if (
+      generation !== interfaceTranslationGenerations[surface] ||
+      videoId !== currentVideoId ||
+      getDisplayLanguageMode(surface) === "original"
+    ) return;
     missing.forEach((segment) =>
       interfaceTranslationFailures.add(segment.cacheKey),
     );
+    rerender();
   } finally {
-    missing.forEach((segment) => interfaceTranslationInFlight.delete(segment.cacheKey));
-    setTranslatingSpinner(false);
+    missing.forEach((segment) => {
+      if (interfaceTranslationInFlight.get(segment.cacheKey) === generation) {
+        interfaceTranslationInFlight.delete(segment.cacheKey);
+      }
+    });
+    if (
+      generation === interfaceTranslationGenerations[surface] &&
+      videoId === currentVideoId
+    ) {
+      setTranslatingSpinner(false, surface);
+    }
   }
+}
+
+function getInterfaceTranslationSegments(surface) {
+  if (surface === "overview") return getOverviewTranslationSegments();
+  if (surface === "notes") {
+    return currentNotes.map((note, index) => ({
+      id: getNoteTranslationId(note, index),
+      text: note.text || "",
+    }));
+  }
+  return [];
+}
+
+function rerenderInterfaceSurface(surface) {
+  const contentArea = document.getElementById("contentArea");
+  const scrollTop = contentArea?.scrollTop || 0;
+  if (surface === "overview" && currentAnalysis) {
+    renderAnalysisResults(currentAnalysis);
+  } else if (surface === "notes") {
+    if (
+      currentNotesAreLoaded &&
+      currentNotesOwnerVideoId === currentVideoId
+    ) {
+      renderNotes(currentNotes, currentNotesFilterVideoId);
+    } else {
+      showNotesLoading();
+    }
+  }
+  if (contentArea) contentArea.scrollTop = scrollTop;
+}
+
+async function retryInterfaceTranslationSegment(surface, id) {
+  if (!DISPLAY_LANGUAGE_SURFACES.has(surface) || surface === "transcript") return;
+  if (!resultTabIsActive(surface)) return;
+  const segment = getInterfaceTranslationSegments(surface).find(
+    (candidate) => candidate.id === id,
+  );
+  if (!segment?.text) return;
+  const cacheKey = interfaceTranslationCacheKey(surface, segment.id, segment.text);
+  interfaceTranslationFailures.delete(cacheKey);
+  interfaceTranslationInFlight.delete(cacheKey);
+  rerenderInterfaceSurface(surface);
+  await translateInterfaceSegments(surface, [segment], () => {
+    rerenderInterfaceSurface(surface);
+  });
 }
 
 function getOverviewTranslationSegments() {
@@ -854,12 +983,7 @@ function translateOverviewContent() {
   return translateInterfaceSegments(
     "overview",
     getOverviewTranslationSegments(),
-    () => {
-      const contentArea = document.getElementById("contentArea");
-      const scrollTop = contentArea?.scrollTop || 0;
-      renderAnalysisResults(currentAnalysis);
-      if (contentArea) contentArea.scrollTop = scrollTop;
-    },
+    () => rerenderInterfaceSurface("overview"),
   );
 }
 
@@ -871,16 +995,17 @@ function getNoteTranslationId(note, index) {
 }
 
 function translateNotesContent() {
-  const segments = currentNotes.map((note, index) => ({
-    id: getNoteTranslationId(note, index),
-    text: note.text || "",
-  }));
-  return translateInterfaceSegments("notes", segments, () => {
-    const contentArea = document.getElementById("contentArea");
-    const scrollTop = contentArea?.scrollTop || 0;
-    renderNotes(currentNotes, currentNotesFilterVideoId);
-    if (contentArea) contentArea.scrollTop = scrollTop;
-  });
+  if (
+    !currentNotesAreLoaded ||
+    currentNotesOwnerVideoId !== currentVideoId
+  ) {
+    return Promise.resolve();
+  }
+  return translateInterfaceSegments(
+    "notes",
+    getInterfaceTranslationSegments("notes"),
+    () => rerenderInterfaceSurface("notes"),
+  );
 }
 
 /**
@@ -968,7 +1093,7 @@ function renderAnalysisResults(analysis) {
   });
 
   if (
-    currentTranscriptMode !== "original" &&
+    getDisplayLanguageMode("overview") !== "original" &&
     resultTabIsActive("overview")
   ) {
     void translateOverviewContent();
@@ -1001,7 +1126,7 @@ async function saveQuoteAsNote(quote, btn) {
         btn.disabled = false;
       }, 1500);
       // Refresh notes list if on Notes tab
-      loadNotes(currentVideoId);
+      void loadNotes(getSelectedNotesFilter(currentVideoId));
     } else {
       console.error("[YouTube Digest] Save quote as note failed:", result.error);
       btn.textContent = "Error";
@@ -1396,9 +1521,6 @@ function showState(state) {
   // which is why the tabs could vanish when re-opening an already-analyzed video.
   document.getElementById("tabsNav").style.display =
     state === "results" ? "flex" : "none";
-  document.getElementById("transcriptModeControl").style.display =
-    state === "results" ? "inline-flex" : "none";
-
   if (state !== "results") {
     stopPlaybackTracking();
   }
@@ -1433,6 +1555,38 @@ function showConfigError(configStatus) {
 // ============================================================
 // TAB SWITCHING
 // ============================================================
+
+function getActiveResultTabName() {
+  return document.querySelector(".tab.active")?.dataset.tab || "transcript";
+}
+
+async function dispatchActiveTabWork() {
+  const tabName = getActiveResultTabName();
+  if (tabName === "overview") {
+    if (!currentAnalysis) {
+      if (!isAnalysisLoading) await triggerAnalysis();
+    } else if (getDisplayLanguageMode("overview") !== "original") {
+      await translateOverviewContent();
+    }
+    return;
+  }
+  if (tabName === "notes") {
+    if (
+      getDisplayLanguageMode("notes") !== "original" &&
+      currentNotesAreLoaded &&
+      currentNotesOwnerVideoId === currentVideoId
+    ) {
+      await translateNotesContent();
+    }
+    return;
+  }
+  if (
+    getDisplayLanguageMode("transcript") !== "original" &&
+    !transcriptScrollObserver
+  ) {
+    await translateTranscript();
+  }
+}
 
 function switchTab(tabName) {
   // Capture the transcript position before another tab reuses the same scroll
@@ -1479,24 +1633,7 @@ function switchTab(tabName) {
 
   // Translate only the visible tab. This prevents hidden surfaces from using
   // tokens or competing with the batch queue the user is waiting for.
-  if (tabName === "overview") {
-    if (!currentAnalysis && !isAnalysisLoading) {
-      triggerAnalysis();
-    } else if (currentAnalysis && currentTranscriptMode !== "original") {
-      void translateOverviewContent();
-    }
-  } else if (
-    tabName === "notes" &&
-    currentTranscriptMode !== "original"
-  ) {
-    void translateNotesContent();
-  } else if (
-    tabName === "transcript" &&
-    currentTranscriptMode !== "original" &&
-    !transcriptScrollObserver
-  ) {
-    void translateTranscript();
-  }
+  void dispatchActiveTabWork();
 }
 
 /**
@@ -1507,6 +1644,16 @@ async function triggerAnalysis() {
   if (!currentTranscriptTimestamped || isAnalysisLoading || currentAnalysis)
     return;
 
+  const requestVideoId = currentVideoId;
+  const requestGeneration = ++analysisGeneration;
+  const requestTranscript = currentTranscriptTimestamped;
+  const requestVideoTitle = currentVideoTitle;
+  const requestChannelName = currentChannelName;
+  const requestVideoDescription = currentVideoDescription;
+  const requestVideoDuration = currentVideoDuration;
+  const requestIsCurrent = () =>
+    requestGeneration === analysisGeneration &&
+    requestVideoId === currentVideoId;
   isAnalysisLoading = true;
 
   // Show loading indicators in the Overview tab
@@ -1523,17 +1670,17 @@ async function triggerAnalysis() {
   try {
     const analysisResult = await chrome.runtime.sendMessage({
       action: "analyzeTranscript",
-      transcriptText: currentTranscriptTimestamped,
-      videoTitle: currentVideoTitle,
-      channelName: currentChannelName,
-      videoDescription: currentVideoDescription,
-      videoDuration: currentVideoDuration,
+      transcriptText: requestTranscript,
+      videoTitle: requestVideoTitle,
+      channelName: requestChannelName,
+      videoDescription: requestVideoDescription,
+      videoDuration: requestVideoDuration,
     });
+    if (!requestIsCurrent()) return;
 
     if (!analysisResult.success) {
       if (chapterList)
         chapterList.innerHTML = `<li class="chapter-item" style="color: var(--accent); border: none;">Analysis failed: ${escapeHtml(analysisResult.error || "Unknown error")}</li>`;
-      isAnalysisLoading = false;
       return;
     }
 
@@ -1542,14 +1689,14 @@ async function triggerAnalysis() {
     highlightMomentsOnPage(currentAnalysis.keyMoments);
 
     // Save to cache now that we have analysis
-    await saveToCache(currentVideoId);
+    if (requestIsCurrent()) await saveToCache(requestVideoId);
   } catch (error) {
     console.error("[YouTube Digest Panel] Analysis error:", error);
-    if (chapterList)
+    if (requestIsCurrent() && chapterList)
       chapterList.innerHTML = `<li class="chapter-item" style="color: var(--accent); border: none;">Error: ${escapeHtml(error.message)}</li>`;
+  } finally {
+    if (requestIsCurrent()) isAnalysisLoading = false;
   }
-
-  isAnalysisLoading = false;
 }
 
 // ============================================================
@@ -1846,7 +1993,7 @@ function setupExplainFeature() {
         }
 
         button.textContent = "Saved";
-        loadNotes(currentVideoId);
+        void loadNotes(getSelectedNotesFilter(currentVideoId));
         setTimeout(() => {
           tooltip.style.display = "none";
           button.textContent = originalText;
@@ -2074,24 +2221,63 @@ async function updateCache() {
 // NOTES
 // ============================================================
 
+function getSelectedNotesFilter(videoId = currentVideoId) {
+  const showAll = document
+    .getElementById("notesFilterAll")
+    ?.classList.contains("active");
+  return showAll ? null : videoId;
+}
+
+function showNotesLoading() {
+  const notesList = document.getElementById("notesList");
+  const notesIntro = document.getElementById("notesIntro");
+  if (notesList) notesList.innerHTML = "";
+  if (notesIntro) {
+    notesIntro.style.display = "block";
+    notesIntro.textContent = "Loading notes...";
+  }
+}
+
 /**
  * Loads and renders notes from storage.
  * @param {string|null} videoId - Filter by video ID, or null for all notes
  */
 async function loadNotes(videoId) {
+  const requestVideoId = currentVideoId;
+  const requestedFilter = videoId;
+  const requestGeneration = ++notesRequestGeneration;
+  const requestIsCurrent = () =>
+    requestGeneration === notesRequestGeneration &&
+    requestVideoId === currentVideoId;
+  currentNotes = [];
+  currentNotesFilterVideoId = requestedFilter;
+  currentNotesOwnerVideoId = null;
+  currentNotesAreLoaded = false;
+  showNotesLoading();
   try {
     const result = await chrome.runtime.sendMessage({
       action: "getNotes",
-      videoId: videoId,
+      videoId: requestedFilter,
     });
 
-    if (result.success) {
+    if (requestIsCurrent() && result.success) {
       currentNotes = result.notes || [];
-      currentNotesFilterVideoId = videoId;
-      renderNotes(result.notes, videoId);
+      currentNotesFilterVideoId = requestedFilter;
+      currentNotesOwnerVideoId = requestVideoId;
+      currentNotesAreLoaded = true;
+      renderNotes(result.notes, requestedFilter);
+    } else if (requestIsCurrent()) {
+      currentNotesOwnerVideoId = requestVideoId;
+      currentNotesAreLoaded = true;
+      renderNotes([], requestedFilter);
     }
   } catch (error) {
-    console.error("[YouTube Digest Panel] Load notes error:", error);
+    if (requestIsCurrent()) {
+      console.error("[YouTube Digest Panel] Load notes error:", error);
+      currentNotesOwnerVideoId = requestVideoId;
+      currentNotesAreLoaded = true;
+      renderNotes([], requestedFilter);
+    }
   }
 }
 
@@ -2198,7 +2384,12 @@ function renderNotes(notes, filteredVideoId) {
     notesList.appendChild(noteEl);
   });
 
-  if (currentTranscriptMode !== "original" && resultTabIsActive("notes")) {
+  if (
+    getDisplayLanguageMode("notes") !== "original" &&
+    currentNotesAreLoaded &&
+    currentNotesOwnerVideoId === currentVideoId &&
+    resultTabIsActive("notes")
+  ) {
     void translateNotesContent();
   }
 }
@@ -2512,40 +2703,116 @@ function restorePendingTranscriptViewState(videoId) {
 }
 
 // ============================================================
-// UNIVERSAL DISPLAY LANGUAGE — Original / Chinese / aligned bilingual
+// INDEPENDENT DISPLAY LANGUAGES — Original / Chinese / aligned bilingual
 // ============================================================
 
-async function loadDisplayLanguageMode(videoId) {
+function getDisplayLanguageMode(surface) {
+  if (!DISPLAY_LANGUAGE_SURFACES.has(surface)) return "original";
+  return currentDisplayLanguageModes[surface] || "original";
+}
+
+async function loadDisplayLanguageMode(videoId, surface = "transcript") {
+  if (!DISPLAY_LANGUAGE_SURFACES.has(surface)) return "original";
   if (!videoId) {
-    setTranscriptModeButtons("original");
+    currentDisplayLanguageModes[surface] = "original";
+    if (surface === "transcript") currentTranscriptMode = "original";
+    setLanguageModeButtons(surface, "original");
     return "original";
   }
   try {
+    await displayLanguageModeSaveQueue;
     const stored = await chrome.storage.local.get(DISPLAY_LANGUAGE_MODE_KEY);
-    const mode = stored?.[DISPLAY_LANGUAGE_MODE_KEY]?.[videoId]?.mode;
-    currentTranscriptMode = DISPLAY_LANGUAGE_MODES.has(mode)
-      ? mode
-      : "original";
+    const videoModes = stored?.[DISPLAY_LANGUAGE_MODE_KEY]?.[videoId];
+    // v1.2 stored one shared `mode`. Use it as the initial choice for each
+    // surface, then persist independent values after the first new change.
+    const mode = videoModes?.[surface] ?? videoModes?.mode;
+    currentDisplayLanguageModes[surface] = DISPLAY_LANGUAGE_MODES.has(mode)
+      ? mode : "original";
   } catch (error) {
-    currentTranscriptMode = "original";
+    currentDisplayLanguageModes[surface] = "original";
   }
-  setTranscriptModeButtons(currentTranscriptMode);
-  return currentTranscriptMode;
+  if (surface === "transcript") {
+    currentTranscriptMode = currentDisplayLanguageModes.transcript;
+  }
+  setLanguageModeButtons(surface, currentDisplayLanguageModes[surface]);
+  return currentDisplayLanguageModes[surface];
 }
 
-async function saveDisplayLanguageMode(videoId, mode) {
-  if (!videoId || !DISPLAY_LANGUAGE_MODES.has(mode)) return;
-  const stored = await chrome.storage.local.get(DISPLAY_LANGUAGE_MODE_KEY);
-  const modes = stored?.[DISPLAY_LANGUAGE_MODE_KEY] || {};
-  modes[videoId] = { mode, updatedAt: Date.now() };
-  const recentModes = Object.fromEntries(
-    Object.entries(modes)
-      .sort(([, a], [, b]) => (b.updatedAt || 0) - (a.updatedAt || 0))
-      .slice(0, 50),
+async function loadAllDisplayLanguageModes(videoId, shouldApply = () => true) {
+  let videoModes = null;
+  if (videoId) {
+    try {
+      await displayLanguageModeSaveQueue;
+      const stored = await chrome.storage.local.get(DISPLAY_LANGUAGE_MODE_KEY);
+      videoModes = stored?.[DISPLAY_LANGUAGE_MODE_KEY]?.[videoId] || null;
+    } catch (error) {
+      videoModes = null;
+    }
+  }
+  const loadedModes = Object.fromEntries(
+    [...DISPLAY_LANGUAGE_SURFACES].map((surface) => {
+      const storedMode = videoModes?.[surface] ?? videoModes?.mode;
+      return [
+        surface,
+        DISPLAY_LANGUAGE_MODES.has(storedMode) ? storedMode : "original",
+      ];
+    }),
   );
-  await chrome.storage.local.set({
-    [DISPLAY_LANGUAGE_MODE_KEY]: recentModes,
-  });
+  if (!shouldApply()) return loadedModes;
+  currentDisplayLanguageModes = loadedModes;
+  currentTranscriptMode = loadedModes.transcript;
+  setAllLanguageModeButtons();
+  return { ...loadedModes };
+}
+
+async function saveDisplayLanguageMode(
+  videoId,
+  mode,
+  surface = "transcript",
+) {
+  if (
+    !videoId ||
+    !DISPLAY_LANGUAGE_SURFACES.has(surface) ||
+    !DISPLAY_LANGUAGE_MODES.has(mode)
+  ) return;
+  const saveOperation = async () => {
+    const stored = await chrome.storage.local.get(DISPLAY_LANGUAGE_MODE_KEY);
+    const modes = stored?.[DISPLAY_LANGUAGE_MODE_KEY] || {};
+    const previous = modes[videoId] || {};
+    modes[videoId] = {
+      transcript: DISPLAY_LANGUAGE_MODES.has(previous.transcript)
+        ? previous.transcript
+        : DISPLAY_LANGUAGE_MODES.has(previous.mode)
+          ? previous.mode
+          : "original",
+      overview: DISPLAY_LANGUAGE_MODES.has(previous.overview)
+        ? previous.overview
+        : DISPLAY_LANGUAGE_MODES.has(previous.mode)
+          ? previous.mode
+          : "original",
+      notes: DISPLAY_LANGUAGE_MODES.has(previous.notes)
+        ? previous.notes
+        : DISPLAY_LANGUAGE_MODES.has(previous.mode)
+          ? previous.mode
+          : "original",
+      updatedAt: Date.now(),
+    };
+    modes[videoId][surface] = mode;
+    const recentModes = Object.fromEntries(
+      Object.entries(modes)
+        .sort(([, a], [, b]) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        .slice(0, 50),
+    );
+    await chrome.storage.local.set({
+      [DISPLAY_LANGUAGE_MODE_KEY]: recentModes,
+    });
+  };
+  const queuedSave = displayLanguageModeSaveQueue.then(
+    saveOperation,
+    saveOperation,
+  );
+  displayLanguageModeSaveQueue = queuedSave.catch(() => {});
+  return queuedSave;
 }
 
 function getActiveTranscriptSegments() {
@@ -2556,50 +2823,85 @@ function transcriptTranslationCacheKey(segment) {
   return `${currentVideoId}:zh:semantic:${segment.id}`;
 }
 
+function setLanguageModeButtons(surface, mode) {
+  document
+    .querySelectorAll(`[data-language-surface="${surface}"] .transcript-mode-btn`)
+    .forEach((button) => {
+      const active = button.dataset.transcriptMode === mode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+}
+
 function setTranscriptModeButtons(mode) {
-  document.querySelectorAll(".transcript-mode-btn").forEach((button) => {
-    const active = button.dataset.transcriptMode === mode;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
+  setLanguageModeButtons("transcript", mode);
+}
+
+function setAllLanguageModeButtons() {
+  DISPLAY_LANGUAGE_SURFACES.forEach((surface) => {
+    setLanguageModeButtons(surface, getDisplayLanguageMode(surface));
   });
 }
 
-async function handleDisplayLanguageModeChange(mode) {
-  if (!DISPLAY_LANGUAGE_MODES.has(mode)) return;
-  if (mode === currentTranscriptMode) return;
+async function handleDisplayLanguageModeChange(surface, mode) {
+  if (
+    !DISPLAY_LANGUAGE_SURFACES.has(surface) ||
+    !DISPLAY_LANGUAGE_MODES.has(mode) ||
+    mode === getDisplayLanguageMode(surface)
+  ) return;
 
-  currentTranscriptMode = mode;
-  await saveDisplayLanguageMode(currentVideoId, mode);
-  if (mode !== "original") interfaceTranslationFailures.clear();
-  translationGeneration += 1;
-  translationWorkCount = 0;
-  setTranslatingSpinner(false);
-  if (transcriptScrollObserver) transcriptScrollObserver.disconnect();
-  transcriptScrollObserver = null;
-  setTranscriptModeButtons(mode);
-  const activeTabName =
-    document.querySelector(".tab.active")?.dataset.tab || "transcript";
+  const handlerVideoId = currentVideoId;
+  const handlerRevision = ++languageModeChangeRevisions[surface];
+  currentDisplayLanguageModes[surface] = mode;
+  if (surface === "transcript") currentTranscriptMode = mode;
+  setLanguageModeButtons(surface, mode);
+  const savePromise = saveDisplayLanguageMode(handlerVideoId, mode, surface).catch(
+    (error) => {
+      if (
+        handlerRevision === languageModeChangeRevisions[surface] &&
+        handlerVideoId === currentVideoId
+      ) {
+        console.error("[YouTube Digest] Language mode save failed:", error);
+      }
+    },
+  );
 
-  if (mode === "original") {
-    renderTranscript();
-    if (currentAnalysis) renderAnalysisResults(currentAnalysis);
-    if (currentNotes.length) renderNotes(currentNotes, currentNotesFilterVideoId);
-    return;
+  let workPromise = Promise.resolve();
+
+  if (surface === "transcript") {
+    translationGeneration += 1;
+    translationWorkCounts.transcript = 0;
+    setTranslatingSpinner(false, "transcript", true);
+    if (transcriptScrollObserver) transcriptScrollObserver.disconnect();
+    transcriptScrollObserver = null;
+    if (mode === "original") renderTranscript();
+    else if (resultTabIsActive("transcript")) {
+      workPromise = translateTranscript();
+    }
+  } else {
+    interfaceTranslationGenerations[surface] += 1;
+    translationWorkCounts[surface] = 0;
+    setTranslatingSpinner(false, surface, true);
+    if (mode !== "original") {
+      for (const segment of getInterfaceTranslationSegments(surface)) {
+        interfaceTranslationFailures.delete(
+          interfaceTranslationCacheKey(surface, segment.id, segment.text),
+        );
+      }
+    }
+    rerenderInterfaceSurface(surface);
+    if (mode !== "original" && resultTabIsActive(surface)) {
+      if (surface === "overview" && !currentAnalysis && !isAnalysisLoading) {
+        workPromise = triggerAnalysis();
+      } else if (surface === "overview") {
+        workPromise = translateOverviewContent();
+      } else {
+        workPromise = translateNotesContent();
+      }
+    }
   }
 
-  if (currentAnalysis) {
-    renderAnalysisResults(currentAnalysis);
-  }
-  if (currentNotes.length) {
-    renderNotes(currentNotes, currentNotesFilterVideoId);
-  }
-  if (activeTabName === "overview" && currentAnalysis) {
-    await translateOverviewContent();
-  } else if (activeTabName === "notes" && currentNotes.length) {
-    await translateNotesContent();
-  } else if (activeTabName === "transcript") {
-    await translateTranscript();
-  }
+  await Promise.allSettled([savePromise, workPromise]);
 }
 
 function renderTranscriptSegmentContent(segment, mode, translated, error) {
@@ -2615,6 +2917,10 @@ function renderTranscriptSegmentContent(segment, mode, translated, error) {
 
   if (mode === "bilingual") {
     return `<span class="transcript-copy"><span class="transcript-original">${original}</span><span class="transcript-translation ${translated ? "" : error ? "translation-error" : "translation-pending"}">${translationHtml}</span></span>`;
+  }
+
+  if (error) {
+    return `<span class="transcript-copy"><span class="transcript-original">${original}</span><span class="transcript-translation translation-error">${translationHtml}</span></span>`;
   }
 
   return `<span class="transcript-copy"><span class="transcript-translation ${translated ? "" : error ? "translation-error" : "translation-pending"}">${translationHtml}</span></span>`;
@@ -2784,7 +3090,13 @@ async function requestTranscriptTranslationBatch(
     });
     refreshTranscriptSearch({ preserveIndex: true, scroll: false });
   } finally {
-    setTranslatingSpinner(false);
+    if (
+      generation === translationGeneration &&
+      videoId === currentVideoId &&
+      mode === currentTranscriptMode
+    ) {
+      setTranslatingSpinner(false);
+    }
   }
 }
 
@@ -2881,11 +3193,22 @@ async function translateTranscript() {
   });
 }
 
-function setTranslatingSpinner(show) {
-  if (show) translationWorkCount += 1;
-  else translationWorkCount = Math.max(0, translationWorkCount - 1);
-  const isTranslating = translationWorkCount > 0;
-  const spinner = document.getElementById("langSpinner");
+function setTranslatingSpinner(
+  show,
+  surface = "transcript",
+  forceReset = false,
+) {
+  if (!DISPLAY_LANGUAGE_SURFACES.has(surface)) return;
+  if (forceReset) translationWorkCounts[surface] = 0;
+  else if (show) translationWorkCounts[surface] += 1;
+  else {
+    translationWorkCounts[surface] = Math.max(
+      0,
+      translationWorkCounts[surface] - 1,
+    );
+  }
+  const isTranslating = translationWorkCounts[surface] > 0;
+  const spinner = document.getElementById(`${surface}LangSpinner`);
   if (spinner) spinner.classList.toggle("visible", isTranslating);
 }
 
@@ -2899,8 +3222,15 @@ globalThis.__YTD_TRANSCRIPT_TESTING__ = {
   findLiteralTranscriptMatches,
   loadTranscriptViewState,
   saveTranscriptViewState,
+  getDisplayLanguageMode,
   loadDisplayLanguageMode,
+  loadAllDisplayLanguageModes,
   saveDisplayLanguageMode,
+  handleDisplayLanguageModeChange,
+  retryInterfaceTranslationSegment,
+  dispatchActiveTabWork,
+  triggerAnalysis,
+  loadNotes,
   getNavigationUrl,
   renderSubtitleInlineMarkup,
   renderTranscriptSegmentContent,

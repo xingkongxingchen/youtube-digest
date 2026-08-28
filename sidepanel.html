@@ -27,37 +27,6 @@
           >
             Settings
           </button>
-          <div
-            class="transcript-mode-control global-language-control"
-            id="transcriptModeControl"
-            role="group"
-            aria-label="Content language"
-            style="display: none"
-          >
-            <button
-              class="transcript-mode-btn active"
-              type="button"
-              data-transcript-mode="original"
-              aria-pressed="true"
-            >Original</button>
-            <button
-              class="transcript-mode-btn"
-              type="button"
-              data-transcript-mode="zh"
-              aria-pressed="false"
-            >中文</button>
-            <button
-              class="transcript-mode-btn"
-              type="button"
-              data-transcript-mode="bilingual"
-              aria-pressed="false"
-            >双语</button>
-            <span
-              class="translation-spinner"
-              id="langSpinner"
-              aria-label="Translating"
-            ></span>
-          </div>
         </div>
       </div>
 
@@ -110,7 +79,21 @@
         <div class="tab-panel active" data-panel="transcript">
           <div class="section">
             <div class="section-header transcript-section-header">
-              <div class="section-title">Full Transcript</div>
+              <div class="section-title-wrap">
+                <div class="section-title">Full Transcript</div>
+                <div
+                  class="transcript-mode-control"
+                  id="transcriptModeControl"
+                  role="group"
+                  aria-label="Transcript language"
+                  data-language-surface="transcript"
+                >
+                  <button class="transcript-mode-btn active" type="button" data-transcript-mode="original" aria-pressed="true">Original</button>
+                  <button class="transcript-mode-btn" type="button" data-transcript-mode="zh" aria-pressed="false">中文</button>
+                  <button class="transcript-mode-btn" type="button" data-transcript-mode="bilingual" aria-pressed="false">双语</button>
+                  <span class="translation-spinner" id="transcriptLangSpinner" aria-label="Translating"></span>
+                </div>
+              </div>
               <div class="transcript-actions">
                 <button class="enhance-btn" id="copyTranscriptBtn">Copy</button>
                 <button class="enhance-btn" id="exportTranscriptBtn">
@@ -184,6 +167,21 @@
 
         <!-- TAB: Overview (chapters + key quotes) - requires LLM -->
         <div class="tab-panel" data-panel="overview">
+          <div class="tab-language-header">
+            <div class="section-title">Overview</div>
+            <div
+              class="transcript-mode-control"
+              id="overviewModeControl"
+              role="group"
+              aria-label="Overview language"
+              data-language-surface="overview"
+            >
+              <button class="transcript-mode-btn active" type="button" data-transcript-mode="original" aria-pressed="true">Original</button>
+              <button class="transcript-mode-btn" type="button" data-transcript-mode="zh" aria-pressed="false">中文</button>
+              <button class="transcript-mode-btn" type="button" data-transcript-mode="bilingual" aria-pressed="false">双语</button>
+              <span class="translation-spinner" id="overviewLangSpinner" aria-label="Translating"></span>
+            </div>
+          </div>
           <!-- Chapters -->
           <div class="section">
             <div class="section-title">Chapters</div>
@@ -225,7 +223,21 @@
         <div class="tab-panel" data-panel="notes">
           <div class="section">
             <div class="section-header">
-              <div class="section-title">Saved Notes</div>
+              <div class="section-title-wrap">
+                <div class="section-title">Saved Notes</div>
+                <div
+                  class="transcript-mode-control"
+                  id="notesModeControl"
+                  role="group"
+                  aria-label="Notes language"
+                  data-language-surface="notes"
+                >
+                  <button class="transcript-mode-btn active" type="button" data-transcript-mode="original" aria-pressed="true">Original</button>
+                  <button class="transcript-mode-btn" type="button" data-transcript-mode="zh" aria-pressed="false">中文</button>
+                  <button class="transcript-mode-btn" type="button" data-transcript-mode="bilingual" aria-pressed="false">双语</button>
+                  <span class="translation-spinner" id="notesLangSpinner" aria-label="Translating"></span>
+                </div>
+              </div>
               <div class="notes-filter">
                 <button
                   class="enhance-btn active"
