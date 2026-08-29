@@ -3,6 +3,57 @@ const YTD_OPTIONS = (() => {
   const PREVIEW_STORAGE_PREFIX = "youtubeDigestPreview:";
   const DEFAULT_LANGUAGE = "zh-CN";
   const SUPPORTED_LANGUAGES = new Set(["en", "zh-CN"]);
+  const PROVIDER_SCHEMA_VERSION = 2;
+  const PROVIDER_PRESETS = Object.freeze({
+    deepseek: Object.freeze({
+      type: "deepseek",
+      name: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+    }),
+    openai: Object.freeze({
+      type: "openai",
+      name: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-5-mini",
+    }),
+    claude: Object.freeze({
+      type: "anthropic",
+      name: "Anthropic Claude",
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-sonnet-4-6",
+    }),
+    gemini: Object.freeze({
+      type: "gemini",
+      name: "Gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3.5-flash",
+    }),
+    openrouter: Object.freeze({
+      type: "openrouter",
+      name: "OpenRouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "openai/gpt-5-mini",
+    }),
+    minimax: Object.freeze({
+      type: "minimax",
+      name: "MiniMax",
+      baseUrl: "https://api.minimaxi.com/v1",
+      model: "MiniMax-M2.7",
+    }),
+    mimo: Object.freeze({
+      type: "mimo",
+      name: "小米 MiMo",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      model: "mimo-v2.5-pro",
+    }),
+    custom: Object.freeze({
+      type: "custom-openai",
+      name: "自定义 OpenAI 兼容服务",
+      baseUrl: "",
+      model: "",
+    }),
+  });
 
   const COPY = {
     en: {
@@ -10,7 +61,7 @@ const YTD_OPTIONS = (() => {
       languageGroupLabel: "Interface language",
       heading: "Bring your own API keys",
       lede:
-        "Keys stay in this Chrome profile and are sent only to Supadata and DeepSeek. This open-source extension has no developer server or analytics.",
+        "Keys stay in this Chrome profile and are sent only to Supadata and the Provider you enable. This open-source extension has no developer server or analytics.",
       transcriptProvider: "Transcript provider",
       supadataApiKeyLabel: "Supadata API key",
       supadataHelp: "Used to fetch timestamped YouTube subtitles. ",
@@ -60,6 +111,7 @@ const YTD_OPTIONS = (() => {
       saving: "Saving…",
       addSupadataKey: "Add a Supadata API key.",
       addDeepseekKey: "Add a DeepSeek API key.",
+      addProvider: "Add and configure at least one Provider.",
       saved: "Saved. Reopen YouTube Digest to use these settings.",
       saveFailed: "Could not save settings. Please try again.",
       copying: "Copying…",
@@ -80,7 +132,7 @@ const YTD_OPTIONS = (() => {
       languageGroupLabel: "界面语言",
       heading: "使用你自己的 API 密钥",
       lede:
-        "密钥仅保存在当前 Chrome 个人资料中，只会发送给 Supadata 和 DeepSeek。本开源扩展没有开发者服务器，也不使用分析服务。",
+        "密钥仅保存在当前 Chrome 个人资料中，只会发送给 Supadata 和你启用的 Provider。本开源扩展没有开发者服务器，也不使用分析服务。",
       transcriptProvider: "字幕服务",
       supadataApiKeyLabel: "Supadata API 密钥",
       supadataHelp: "用于获取带时间戳的 YouTube 字幕。",
@@ -128,6 +180,7 @@ const YTD_OPTIONS = (() => {
       saving: "正在保存…",
       addSupadataKey: "请添加 Supadata API 密钥。",
       addDeepseekKey: "请添加 DeepSeek API 密钥。",
+      addProvider: "请至少添加并配置一个 Provider。",
       saved: "已保存。请重新打开 YouTube Digest 以使用这些设置。",
       saveFailed: "无法保存设置，请重试。",
       copying: "正在复制…",
@@ -339,6 +392,153 @@ const YTD_OPTIONS = (() => {
     }
   }
 
+  function createProviderId(type = "provider", cryptoApi = globalThis.crypto) {
+    if (typeof cryptoApi?.randomUUID === "function") {
+      return `${type}-${cryptoApi.randomUUID()}`;
+    }
+    return `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function createProviderFromPreset(
+    presetKey,
+    cryptoApi = globalThis.crypto,
+  ) {
+    const preset = PROVIDER_PRESETS[presetKey] || PROVIDER_PRESETS.custom;
+    return {
+      id: createProviderId(preset.type, cryptoApi),
+      type: preset.type,
+      name: preset.name,
+      baseUrl: preset.baseUrl,
+      model: preset.model,
+      apiKey: "",
+    };
+  }
+
+  function normalizeProvider(provider, cryptoApi = globalThis.crypto) {
+    const preset =
+      Object.values(PROVIDER_PRESETS).find(
+        (candidate) => candidate.type === provider?.type,
+      ) || PROVIDER_PRESETS.custom;
+    const type = preset.type;
+    return {
+      id:
+        typeof provider?.id === "string" && provider.id.trim()
+          ? provider.id.trim().replace(/[^A-Za-z0-9_-]/g, "") ||
+            createProviderId(type, cryptoApi)
+          : createProviderId(type, cryptoApi),
+      type,
+      name:
+        typeof provider?.name === "string" && provider.name.trim()
+          ? provider.name.trim()
+          : preset.name,
+      baseUrl:
+        typeof provider?.baseUrl === "string"
+          ? provider.baseUrl.trim().replace(/\/+$/, "")
+          : preset.baseUrl,
+      model:
+        typeof provider?.model === "string"
+          ? provider.model.trim()
+          : preset.model,
+      apiKey:
+        typeof provider?.apiKey === "string" ? provider.apiKey.trim() : "",
+    };
+  }
+
+  function normalizeProviderSettings(input = {}, cryptoApi = globalThis.crypto) {
+    let providers = Array.isArray(input.providers)
+      ? input.providers.map((provider) => normalizeProvider(provider, cryptoApi))
+      : [];
+    if (!providers.length) {
+      const legacyProvider = createProviderFromPreset("deepseek", cryptoApi);
+      legacyProvider.apiKey =
+        typeof input.aiApiKey === "string" ? input.aiApiKey.trim() : "";
+      legacyProvider.baseUrl =
+        typeof input.aiBaseUrl === "string" && input.aiBaseUrl.trim()
+          ? input.aiBaseUrl.trim().replace(/\/+$/, "")
+          : legacyProvider.baseUrl;
+      legacyProvider.model =
+        typeof input.aiModel === "string" && input.aiModel.trim()
+          ? input.aiModel.trim()
+          : legacyProvider.model;
+      providers = [legacyProvider];
+    }
+    const seenIds = new Set();
+    providers = providers.map((provider) => {
+      if (!seenIds.has(provider.id)) {
+        seenIds.add(provider.id);
+        return provider;
+      }
+      const replacement = { ...provider, id: createProviderId(provider.type, cryptoApi) };
+      seenIds.add(replacement.id);
+      return replacement;
+    });
+    const requestedActiveId = String(input.activeProviderId || "").trim();
+    return {
+      schemaVersion: PROVIDER_SCHEMA_VERSION,
+      supadataApiKey:
+        typeof input.supadataApiKey === "string"
+          ? input.supadataApiKey.trim()
+          : "",
+      providers,
+      activeProviderId: providers.some(
+        (provider) => provider.id === requestedActiveId,
+      )
+        ? requestedActiveId
+        : providers[0]?.id || "",
+    };
+  }
+
+  function validateProviderForUi(settingsApi, provider) {
+    const normalized = normalizeProvider(provider);
+    if (typeof settingsApi?.validateProvider === "function") {
+      const result = settingsApi.validateProvider(normalized);
+      if (result === false || result?.valid === false) {
+        throw new Error(
+          result?.message ||
+            result?.error ||
+            result?.errors?.[0] ||
+            "Provider 配置无效。",
+        );
+      }
+      return result?.provider || normalized;
+    }
+    if (!normalized.name) throw new Error("请填写 Provider 名称。");
+    if (!normalized.baseUrl) throw new Error("请填写 API 地址。");
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(normalized.baseUrl);
+    } catch (_error) {
+      throw new Error("API 地址格式无效。");
+    }
+    if (parsedUrl.protocol !== "https:") {
+      throw new Error("API 地址必须使用 HTTPS。");
+    }
+    if (!normalized.model) throw new Error("请填写模型名称。");
+    if (!normalized.apiKey) throw new Error("请填写 API Key。");
+    return normalized;
+  }
+
+  async function requestProviderOriginPermission(root, provider) {
+    const permissions = root.chrome?.permissions;
+    if (!permissions?.request) return true;
+    let origin;
+    try {
+      origin = `${new URL(provider.baseUrl).origin}/*`;
+    } catch (_error) {
+      return false;
+    }
+    return permissions.request({ origins: [origin] });
+  }
+
+  function buildPersistedSettings(settingsApi, draft) {
+    const normalizedDraft = normalizeProviderSettings(draft);
+    if (typeof settingsApi?.normalize !== "function") return normalizedDraft;
+    const normalizedBySettings = settingsApi.normalize(normalizedDraft);
+    return Array.isArray(normalizedBySettings?.providers)
+      ? normalizedBySettings
+      : normalizedDraft;
+  }
+
   function initialize(root = globalThis) {
     const doc = root.document;
     const settingsApi = root.YTD_SETTINGS;
@@ -349,8 +549,11 @@ const YTD_OPTIONS = (() => {
       getSafeLocalStorage(root),
     );
     const form = doc.getElementById("settingsForm");
-    const aiApiKeyInput = doc.getElementById("aiApiKey");
     const supadataApiKeyInput = doc.getElementById("supadataApiKey");
+    const providerList = doc.getElementById("providerList");
+    const providerEmptyState = doc.getElementById("providerEmptyState");
+    const providerCardTemplate = doc.getElementById("providerCardTemplate");
+    const providerAddMenu = doc.getElementById("providerAddMenu");
     const customizationPrompt = doc.getElementById("customizationPrompt");
     const copyCustomizationPromptBtn = doc.getElementById(
       "copyCustomizationPromptBtn",
@@ -361,6 +564,7 @@ const YTD_OPTIONS = (() => {
     const statusStates = new Map();
     const promptDrafts = createPromptDrafts();
     let currentLanguage = DEFAULT_LANGUAGE;
+    let providerSettings = normalizeProviderSettings();
 
     function renderStatus(element) {
       const state = statusStates.get(element);
@@ -372,6 +576,201 @@ const YTD_OPTIONS = (() => {
     function setStatus(element, key, params = {}) {
       statusStates.set(element, { key, params });
       renderStatus(element);
+    }
+
+    function setProviderStatus(element, message, state = "") {
+      element.textContent = message;
+      element.dataset.state = state;
+    }
+
+    function findProvider(providerId) {
+      return providerSettings.providers.find(
+        (provider) => provider.id === providerId,
+      );
+    }
+
+    function updateProviderField(providerId, field, value) {
+      const provider = findProvider(providerId);
+      if (!provider) return;
+      provider[field] = value;
+    }
+
+    async function persistProviderSettings({ validateAll = true } = {}) {
+      providerSettings.supadataApiKey = supadataApiKeyInput.value.trim();
+      if (validateAll) {
+        providerSettings.providers = providerSettings.providers.map((provider) =>
+          validateProviderForUi(settingsApi, provider),
+        );
+      }
+      const activeProvider = findProvider(providerSettings.activeProviderId);
+      if (!activeProvider) throw new Error("请先启用一个 Provider。");
+      const permissionGranted = await requestProviderOriginPermission(
+        root,
+        activeProvider,
+      );
+      if (!permissionGranted) {
+        throw new Error("未获得当前 Provider 域名的访问权限。");
+      }
+      const settings = buildPersistedSettings(settingsApi, providerSettings);
+      await storage.set({ [settingsApi.STORAGE_KEY]: settings });
+      providerSettings = normalizeProviderSettings(settings);
+      return settings;
+    }
+
+    function renderProviders() {
+      providerList.innerHTML = "";
+      providerEmptyState.hidden = providerSettings.providers.length > 0;
+      for (const provider of providerSettings.providers) {
+        const fragment = providerCardTemplate.content.cloneNode(true);
+        const card = fragment.querySelector(".provider-card");
+        const body = fragment.querySelector(".provider-card-body");
+        const status = fragment.querySelector(".provider-status");
+        const isActive = provider.id === providerSettings.activeProviderId;
+        card.dataset.providerId = provider.id;
+        card.classList.toggle("active", isActive);
+        fragment.querySelector(".provider-card-title").textContent = provider.name;
+        fragment.querySelector(".provider-type").textContent =
+          `${provider.type === "custom-openai" ? "OpenAI 兼容" : provider.type} Provider`;
+        fragment.querySelector(".provider-icon").textContent =
+          provider.name.trim().slice(0, 1).toUpperCase();
+        fragment.querySelector(".provider-active-badge").hidden = !isActive;
+
+        const nameInput = fragment.querySelector(".provider-name-input");
+        const modelInput = fragment.querySelector(".provider-model-input");
+        const urlInput = fragment.querySelector(".provider-url-input");
+        const keyInput = fragment.querySelector(".provider-key-input");
+        nameInput.value = provider.name;
+        modelInput.value = provider.model;
+        urlInput.value = provider.baseUrl;
+        keyInput.value = provider.apiKey;
+        for (const [input, field] of [
+          [nameInput, "name"],
+          [modelInput, "model"],
+          [urlInput, "baseUrl"],
+          [keyInput, "apiKey"],
+        ]) {
+          input.addEventListener("input", () => {
+            updateProviderField(provider.id, field, input.value);
+            if (field === "name") {
+              card.querySelector(".provider-card-title").textContent =
+                input.value.trim() || "未命名 Provider";
+            }
+          });
+        }
+
+        const secretToggle = fragment.querySelector(".secret-toggle");
+        secretToggle.addEventListener("click", () => {
+          const reveal = keyInput.type === "password";
+          keyInput.type = reveal ? "text" : "password";
+          secretToggle.textContent = reveal ? "隐藏" : "显示";
+          secretToggle.setAttribute("aria-pressed", String(reveal));
+        });
+
+        const expandButton = fragment.querySelector(".provider-expand");
+        expandButton.addEventListener("click", () => {
+          const expanded = expandButton.getAttribute("aria-expanded") === "true";
+          expandButton.setAttribute("aria-expanded", String(!expanded));
+          expandButton.textContent = expanded ? "展开" : "收起";
+          body.hidden = expanded;
+        });
+
+        const testButton = fragment.querySelector(".provider-test");
+        testButton.addEventListener("click", async () => {
+          let candidate;
+          try {
+            candidate = validateProviderForUi(settingsApi, provider);
+          } catch (error) {
+            setProviderStatus(status, error.message, "error");
+            return;
+          }
+          testButton.disabled = true;
+          setProviderStatus(status, "正在测试连接……", "loading");
+          try {
+            const permissionGranted = await requestProviderOriginPermission(
+              root,
+              candidate,
+            );
+            if (!permissionGranted) {
+              throw new Error("未获得该 Provider 域名的访问权限。");
+            }
+            const result = await root.chrome.runtime.sendMessage({
+              action: "TEST_PROVIDER_CONNECTION",
+              provider: candidate,
+            });
+            if (result?.success) {
+              setProviderStatus(
+                status,
+                `${result.providerName || candidate.name} 连接成功。`,
+                "success",
+              );
+            } else {
+              setProviderStatus(
+                status,
+                result?.message || result?.error || "连接失败，请检查配置。",
+                "error",
+              );
+            }
+          } catch (error) {
+            setProviderStatus(
+              status,
+              error.message || "连接失败，请稍后重试。",
+              "error",
+            );
+          } finally {
+            testButton.disabled = false;
+          }
+        });
+
+        const enableButton = fragment.querySelector(".provider-enable");
+        enableButton.disabled = isActive;
+        enableButton.textContent = isActive ? "已启用" : "启用";
+        enableButton.addEventListener("click", async () => {
+          const previousActiveProviderId = providerSettings.activeProviderId;
+          try {
+            validateProviderForUi(settingsApi, provider);
+            providerSettings.activeProviderId = provider.id;
+            enableButton.disabled = true;
+            await persistProviderSettings({ validateAll: false });
+            setStatus(saveStatus, "saved");
+            renderProviders();
+          } catch (error) {
+            providerSettings.activeProviderId = previousActiveProviderId;
+            enableButton.disabled = false;
+            setProviderStatus(status, error.message, "error");
+          }
+        });
+
+        const deleteButton = fragment.querySelector(".provider-delete");
+        deleteButton.disabled = providerSettings.providers.length <= 1;
+        deleteButton.addEventListener("click", async () => {
+          if (providerSettings.providers.length <= 1) {
+            setProviderStatus(status, "至少需要保留一个 Provider。", "error");
+            return;
+          }
+          if (!root.confirm(`确定删除 ${provider.name} 吗？`)) return;
+          const previousProviders = providerSettings.providers;
+          const previousActiveProviderId = providerSettings.activeProviderId;
+          providerSettings.providers = providerSettings.providers.filter(
+            (item) => item.id !== provider.id,
+          );
+          if (providerSettings.activeProviderId === provider.id) {
+            providerSettings.activeProviderId = providerSettings.providers[0].id;
+          }
+          try {
+            deleteButton.disabled = true;
+            await persistProviderSettings({ validateAll: false });
+            setStatus(saveStatus, "saved");
+            renderProviders();
+          } catch (error) {
+            providerSettings.providers = previousProviders;
+            providerSettings.activeProviderId = previousActiveProviderId;
+            deleteButton.disabled = false;
+            setProviderStatus(status, error.message, "error");
+          }
+        });
+
+        providerList.appendChild(fragment);
+      }
     }
 
     function applyLanguage(language) {
@@ -414,19 +813,27 @@ const YTD_OPTIONS = (() => {
     async function loadSettings() {
       try {
         const stored = await storage.get(settingsApi.STORAGE_KEY);
-        const migration = settingsApi.migrateLegacyCustom(
-          stored[settingsApi.STORAGE_KEY],
-        );
-        const settings = migration.settings;
-
-        aiApiKeyInput.value = settings.aiApiKey;
-        supadataApiKeyInput.value = settings.supadataApiKey;
-        if (migration.migrated) {
-          await storage.set({ [settingsApi.STORAGE_KEY]: settings });
-          setStatus(saveStatus, "migrationWarning");
+        const rawSettings = stored[settingsApi.STORAGE_KEY] || {};
+        const migration = typeof settingsApi.migrateLegacyCustom === "function"
+          ? settingsApi.migrateLegacyCustom(rawSettings)
+          : { settings: rawSettings, migrated: false };
+        const sourceSettings = Array.isArray(rawSettings.providers)
+          ? rawSettings
+          : migration.settings;
+        providerSettings = normalizeProviderSettings(sourceSettings);
+        supadataApiKeyInput.value = providerSettings.supadataApiKey;
+        renderProviders();
+        if (migration.migrated || !Array.isArray(rawSettings.providers)) {
+          await storage.set({
+            [settingsApi.STORAGE_KEY]: buildPersistedSettings(
+              settingsApi,
+              providerSettings,
+            ),
+          });
         }
       } catch (_error) {
         setStatus(saveStatus, "settingsLoadFailed");
+        renderProviders();
       }
     }
 
@@ -439,25 +846,25 @@ const YTD_OPTIONS = (() => {
       event.preventDefault();
       setStatus(saveStatus, "saving");
 
-      const settings = settingsApi.normalize({
-        aiApiKey: aiApiKeyInput.value,
-        supadataApiKey: supadataApiKeyInput.value,
-      });
-
-      if (!settings.supadataApiKey) {
+      if (!supadataApiKeyInput.value.trim()) {
         setStatus(saveStatus, "addSupadataKey");
         return;
       }
-      if (!settings.aiApiKey) {
-        setStatus(saveStatus, "addDeepseekKey");
+      if (!providerSettings.providers.length) {
+        setStatus(saveStatus, "addProvider");
         return;
       }
 
       try {
-        await storage.set({ [settingsApi.STORAGE_KEY]: settings });
+        await persistProviderSettings();
         setStatus(saveStatus, "saved");
+        renderProviders();
       } catch (_error) {
-        setStatus(saveStatus, "saveFailed");
+        statusStates.delete(saveStatus);
+        saveStatus.textContent = _error.message || translate(
+          currentLanguage,
+          "saveFailed",
+        );
       }
     }
 
@@ -499,6 +906,26 @@ const YTD_OPTIONS = (() => {
     }
 
     form.addEventListener("submit", saveSettings);
+    providerAddMenu
+      .querySelectorAll("[data-provider-preset]")
+      .forEach((button) => {
+        button.addEventListener("click", () => {
+          const provider = createProviderFromPreset(
+            button.dataset.providerPreset,
+            root.crypto,
+          );
+          providerSettings.providers.push(provider);
+          if (!providerSettings.activeProviderId) {
+            providerSettings.activeProviderId = provider.id;
+          }
+          providerAddMenu.open = false;
+          renderProviders();
+          Array.from(providerList.querySelectorAll(".provider-card"))
+            .find((card) => card.dataset.providerId === provider.id)
+            ?.querySelector("input")
+            ?.focus();
+        });
+      });
     copyCustomizationPromptBtn.addEventListener(
       "click",
       copyCustomizationPrompt,
@@ -518,15 +945,23 @@ const YTD_OPTIONS = (() => {
   return {
     COPY,
     LANGUAGE_STORAGE_KEY,
+    PROVIDER_PRESETS,
+    PROVIDER_SCHEMA_VERSION,
+    buildPersistedSettings,
     copyPromptValue,
+    createProviderFromPreset,
     createPromptDrafts,
     createStorageAdapter,
     normalizeLanguage,
+    normalizeProvider,
+    normalizeProviderSettings,
     persistPreferredLanguage,
     readPreferredLanguage,
+    requestProviderOriginPermission,
     translate,
     updateLanguageButtonState,
     updateLocalizedPrompt,
+    validateProviderForUi,
     switchPromptDraft,
     initialize,
   };

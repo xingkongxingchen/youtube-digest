@@ -39,7 +39,10 @@ test("Settings placeholders and primary actions are Chinese", () => {
   const html = read("options.html");
 
   assert.match(html, /placeholder="粘贴你的 Supadata 密钥"/);
-  assert.match(html, /placeholder="粘贴你的 DeepSeek 密钥"/);
+  assert.match(html, /placeholder="输入 API Key"/);
+  assert.match(html, />测试连接<\/button>/);
+  assert.match(html, />启用<\/button>/);
+  assert.match(html, />删除<\/button>/);
   assert.match(html, /data-i18n="saveSettings">[\s\S]*保存设置/);
   assert.match(html, /data-i18n="clearCache">[\s\S]*清除缓存的摘要/);
   assert.match(html, /data-i18n="deleteNotes">[\s\S]*删除全部笔记/);
@@ -73,7 +76,9 @@ test("customization prompt stays Chinese and preserves technical values", () => 
   const chinesePrompt = options.translate("zh-CN", "customizationPrompt");
 
   assert.match(html, /https:\/\/dash\.supadata\.ai\/auth\/sign-up/);
-  assert.match(html, /https:\/\/platform\.deepseek\.com\/api_keys/);
+  assert.match(html, /data-provider-preset="deepseek"/);
+  assert.match(html, /data-provider-preset="minimax"/);
+  assert.match(html, /data-provider-preset="mimo"/);
   assert.ok(html.includes(`>${chinesePrompt}</textarea>`));
   assert.match(chinesePrompt, /^请把当前本地 YouTube Digest 工作区改为使用/);
   assert.match(

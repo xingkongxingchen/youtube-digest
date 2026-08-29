@@ -14,8 +14,8 @@
         </div>
         <h1 data-i18n="heading">使用你自己的 API 密钥</h1>
         <p class="lede" data-i18n="lede">
-          密钥仅保存在当前 Chrome 个人资料中，只会发送给 Supadata 和
-          DeepSeek。本开源扩展没有开发者服务器，也不使用分析服务。
+          密钥仅保存在当前 Chrome 个人资料中，只会发送给 Supadata 和你启用的
+          Provider。本开源扩展没有开发者服务器，也不使用分析服务。
         </p>
       </header>
 
@@ -50,43 +50,34 @@
         </section>
 
         <section class="card">
-          <h2 data-i18n="aiProvider">人工智能服务</h2>
-          <div
-            class="provider-summary"
-            aria-label="支持的人工智能服务"
-            data-i18n-aria-label="providerSummaryLabel"
-          >
-            <span class="provider-name">DeepSeek V4 Flash</span>
-            <span class="provider-badge" data-i18n="providerBadge"
-              >当前版本支持</span
-            >
+          <div class="provider-section-heading">
+            <div>
+              <h2>Provider 管理</h2>
+              <p class="help provider-section-help">
+                可以保存多个人工智能 Provider，并随时测试或切换当前启用项。API Key 仅保存在当前 Chrome 个人资料中。
+              </p>
+            </div>
+            <details class="provider-add-menu" id="providerAddMenu">
+              <summary class="provider-add-button">新增 Provider</summary>
+              <div class="provider-preset-menu" role="menu" aria-label="选择 Provider 预设">
+                <button type="button" role="menuitem" data-provider-preset="deepseek">DeepSeek</button>
+                <button type="button" role="menuitem" data-provider-preset="openai">OpenAI</button>
+                <button type="button" role="menuitem" data-provider-preset="claude">Claude</button>
+                <button type="button" role="menuitem" data-provider-preset="gemini">Gemini</button>
+                <button type="button" role="menuitem" data-provider-preset="openrouter">OpenRouter</button>
+                <button type="button" role="menuitem" data-provider-preset="minimax">MiniMax</button>
+                <button type="button" role="menuitem" data-provider-preset="mimo">小米 MiMo</button>
+                <button type="button" role="menuitem" data-provider-preset="custom">自定义 OpenAI 兼容</button>
+              </div>
+            </details>
           </div>
 
-          <label for="aiApiKey" data-i18n="deepseekApiKeyLabel"
-            >DeepSeek API 密钥</label
-          >
-          <input
-            id="aiApiKey"
-            name="aiApiKey"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="粘贴你的 DeepSeek 密钥"
-          />
-          <p class="help">
-            <span data-i18n="deepseekHelp"
-              >YouTube Digest 使用 DeepSeek V4 Flash 生成概览、解释内容、翻译字幕和润色笔记。</span
-            >
-            <a
-              href="https://platform.deepseek.com/api_keys"
-              target="_blank"
-              rel="noreferrer"
-              data-i18n="deepseekLink"
-              >创建 DeepSeek API 密钥</a
-            ><span data-i18n="deepseekHelpSuffix">。</span>
+          <div id="providerList" class="provider-list" aria-live="polite"></div>
+          <p id="providerEmptyState" class="provider-empty" hidden>
+            还没有 Provider。请添加一个预设后填写 API Key。
           </p>
-          <div class="privacy-note" data-i18n="privacyNote">
-            使用人工智能功能时，DeepSeek 会收到视频字幕及相关视频上下文。保存前请查看 DeepSeek 的服务条款和价格。
+          <div class="privacy-note">
+            使用人工智能功能时，当前启用的 Provider 会收到视频字幕及相关上下文。保存前请确认 API 地址、服务条款和价格。
           </div>
         </section>
 
@@ -97,6 +88,53 @@
           <span id="saveStatus" role="status" aria-live="polite"></span>
         </div>
       </form>
+
+      <template id="providerCardTemplate">
+        <article class="provider-card">
+          <div class="provider-card-header">
+            <div class="provider-identity">
+              <span class="provider-icon" aria-hidden="true"></span>
+              <div>
+                <div class="provider-title-row">
+                  <h3 class="provider-card-title"></h3>
+                  <span class="provider-active-badge" hidden>当前启用</span>
+                </div>
+                <span class="provider-type"></span>
+              </div>
+            </div>
+            <button class="provider-expand" type="button" aria-expanded="true">收起</button>
+          </div>
+          <div class="provider-card-body">
+            <div class="provider-field-grid">
+              <label>
+                <span>显示名称</span>
+                <input class="provider-name-input" type="text" maxlength="80" autocomplete="off" />
+              </label>
+              <label>
+                <span>模型</span>
+                <input class="provider-model-input" type="text" maxlength="160" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="provider-url-field">
+                <span>API 地址</span>
+                <input class="provider-url-input" type="url" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://example.com/v1" />
+              </label>
+              <label class="provider-key-field">
+                <span>API Key</span>
+                <span class="secret-input-wrap">
+                  <input class="provider-key-input" type="password" autocomplete="off" spellcheck="false" placeholder="输入 API Key" />
+                  <button class="secret-toggle" type="button" aria-pressed="false">显示</button>
+                </span>
+              </label>
+            </div>
+            <div class="provider-card-actions">
+              <button class="provider-test" type="button">测试连接</button>
+              <button class="provider-enable primary" type="button">启用</button>
+              <button class="provider-delete danger" type="button">删除</button>
+              <span class="provider-status" role="status" aria-live="polite"></span>
+            </div>
+          </div>
+        </article>
+      </template>
 
       <details class="card customization-card">
         <summary class="customization-summary">
