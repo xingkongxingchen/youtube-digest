@@ -833,11 +833,20 @@ function getLocalizedPlainText(text, surface, id) {
 }
 
 async function translateInterfaceSegments(surface, segments, rerender) {
-  if (getDisplayLanguageMode(surface) === "original" || !segments.length) {
+  if (
+    getDisplayLanguageMode(surface) === "original" ||
+    !segments.length ||
+    !resultTabIsActive(surface)
+  ) {
     return;
   }
   const generation = interfaceTranslationGenerations[surface];
   const videoId = currentVideoId;
+  const requestIsCurrent = () =>
+    generation === interfaceTranslationGenerations[surface] &&
+    videoId === currentVideoId &&
+    getDisplayLanguageMode(surface) !== "original" &&
+    resultTabIsActive(surface);
   const missing = segments
     .filter((segment) => segment.text)
     .map((segment) => ({
@@ -866,6 +875,7 @@ async function translateInterfaceSegments(surface, segments, rerender) {
       start < missing.length;
       start += TRANSLATION_BATCH_SIZE
     ) {
+      if (!requestIsCurrent()) return;
       const batch = missing.slice(start, start + TRANSLATION_BATCH_SIZE);
       let result;
       try {
@@ -882,13 +892,7 @@ async function translateInterfaceSegments(surface, segments, rerender) {
         console.error("[YouTube Digest] Interface batch error:", error);
         result = { success: false, message: "翻译请求失败，请稍后重试。" };
       }
-      if (
-        generation !== interfaceTranslationGenerations[surface] ||
-        videoId !== currentVideoId ||
-        getDisplayLanguageMode(surface) === "original"
-      ) {
-        return;
-      }
+      if (!requestIsCurrent()) return;
       const aligned = alignTranslatedSegmentBatch(
         batch,
         result?.success ? result.translatedContent?.segments : [],
@@ -911,14 +915,11 @@ async function translateInterfaceSegments(surface, segments, rerender) {
       // as it returns instead of waiting for the full Overview or Notes list.
       rerender();
       await updateCache();
+      if (!requestIsCurrent()) return;
     }
   } catch (error) {
     console.error("[YouTube Digest] Interface translation error:", error);
-    if (
-      generation !== interfaceTranslationGenerations[surface] ||
-      videoId !== currentVideoId ||
-      getDisplayLanguageMode(surface) === "original"
-    ) return;
+    if (!requestIsCurrent()) return;
     missing.forEach((segment) =>
       interfaceTranslationFailures.set(
         segment.cacheKey,
@@ -934,7 +935,8 @@ async function translateInterfaceSegments(surface, segments, rerender) {
     });
     if (
       generation === interfaceTranslationGenerations[surface] &&
-      videoId === currentVideoId
+      videoId === currentVideoId &&
+      resultTabIsActive(surface)
     ) {
       setTranslatingSpinner(false, surface);
     }
@@ -1629,12 +1631,31 @@ async function dispatchActiveTabWork() {
   }
 }
 
+function stopTranslationForSurface(surface) {
+  if (surface === "transcript") {
+    translationGeneration += 1;
+    if (transcriptScrollObserver) transcriptScrollObserver.disconnect();
+    transcriptScrollObserver = null;
+    activeTranslationQueue = null;
+  } else if (surface === "overview" || surface === "notes") {
+    interfaceTranslationGenerations[surface] += 1;
+  } else {
+    return;
+  }
+  setTranslatingSpinner(false, surface, true);
+}
+
 function switchTab(tabName) {
+  const previousTabName = getActiveResultTabName();
   // Capture the transcript position before another tab reuses the same scroll
   // area. Scrolling Overview or Notes must not replace this value.
   if (tabName !== "transcript" && transcriptTabIsActive()) {
     captureCurrentTranscriptScrollTop();
     dismissSelectionActions(true);
+  }
+
+  if (previousTabName !== tabName) {
+    stopTranslationForSurface(previousTabName);
   }
 
   document.querySelectorAll(".tab").forEach((tab) => {
@@ -3057,7 +3078,7 @@ function alignTranslatedSegmentBatch(sourceSegments, responseSegments) {
   return sourceSegments.map((segment) => ({
     id: segment.id,
     text: translatedById.get(segment.id) || "",
-    error: translatedById.has(segment.id) ? "" : "Translation unavailable.",
+    error: translatedById.has(segment.id) ? "" : "部分内容未能翻译。",
   }));
 }
 
@@ -3106,6 +3127,16 @@ function updateTranslatedRow(segment, index, alignedItem, generation) {
 
 let activeTranslationQueue = null;
 
+function transcriptTranslationRequestIsCurrent(generation, videoId, mode) {
+  return (
+    generation === translationGeneration &&
+    videoId === currentVideoId &&
+    mode === currentTranscriptMode &&
+    mode !== "original" &&
+    resultTabIsActive("transcript")
+  );
+}
+
 async function requestTranscriptTranslationBatch(
   indices,
   segments,
@@ -3113,6 +3144,9 @@ async function requestTranscriptTranslationBatch(
   videoId,
   mode,
 ) {
+  if (!transcriptTranslationRequestIsCurrent(generation, videoId, mode)) {
+    return;
+  }
   const sourceBatch = indices.map((index) => segments[index]);
   setTranslatingSpinner(true);
   try {
@@ -3126,11 +3160,9 @@ async function requestTranscriptTranslationBatch(
       videoTitle: currentVideoTitle,
     });
 
-    const isStale =
-      generation !== translationGeneration ||
-      videoId !== currentVideoId ||
-      mode !== currentTranscriptMode;
-    if (isStale) return;
+    if (!transcriptTranslationRequestIsCurrent(generation, videoId, mode)) {
+      return;
+    }
 
     const responseSegments = result?.success
       ? result.translatedContent?.segments
@@ -3150,7 +3182,9 @@ async function requestTranscriptTranslationBatch(
     refreshTranscriptSearch({ preserveIndex: true, scroll: false });
     await updateCache();
   } catch (error) {
-    if (generation !== translationGeneration) return;
+    if (!transcriptTranslationRequestIsCurrent(generation, videoId, mode)) {
+      return;
+    }
     sourceBatch.forEach((segment, batchIndex) => {
       updateTranslatedRow(
         segment,
@@ -3162,9 +3196,7 @@ async function requestTranscriptTranslationBatch(
     refreshTranscriptSearch({ preserveIndex: true, scroll: false });
   } finally {
     if (
-      generation === translationGeneration &&
-      videoId === currentVideoId &&
-      mode === currentTranscriptMode
+      transcriptTranslationRequestIsCurrent(generation, videoId, mode)
     ) {
       setTranslatingSpinner(false);
     }
@@ -3172,7 +3204,11 @@ async function requestTranscriptTranslationBatch(
 }
 
 function retryTranslationSegment(index, generation) {
-  if (generation !== translationGeneration || !activeTranslationQueue) return;
+  if (
+    generation !== translationGeneration ||
+    !activeTranslationQueue ||
+    !resultTabIsActive("transcript")
+  ) return;
   const row = document.querySelector(
     `.transcript-entry[data-segment-index="${index}"]`,
   );
@@ -3194,7 +3230,11 @@ function retryTranslationSegment(index, generation) {
  */
 async function translateTranscript() {
   const segments = getActiveTranscriptSegments();
-  if (!segments.length || currentTranscriptMode === "original") return;
+  if (
+    !segments.length ||
+    currentTranscriptMode === "original" ||
+    !resultTabIsActive("transcript")
+  ) return;
 
   const generation = translationGeneration;
   const videoId = currentVideoId;
@@ -3207,7 +3247,11 @@ async function translateTranscript() {
   let processing = false;
 
   const processNext = async () => {
-    if (processing || queue.length === 0 || generation !== translationGeneration)
+    if (
+      processing ||
+      queue.length === 0 ||
+      !transcriptTranslationRequestIsCurrent(generation, videoId, mode)
+    )
       return;
     processing = true;
     const indices = queue.splice(0, TRANSLATION_BATCH_SIZE);
@@ -3222,12 +3266,21 @@ async function translateTranscript() {
       );
     } finally {
       processing = false;
-      if (queue.length && generation === translationGeneration) processNext();
+      if (
+        queue.length &&
+        transcriptTranslationRequestIsCurrent(generation, videoId, mode)
+      ) {
+        processNext();
+      }
     }
   };
 
   const enqueue = (index, force = false) => {
-    if (!Number.isInteger(index) || !segments[index]) return;
+    if (
+      !Number.isInteger(index) ||
+      !segments[index] ||
+      !transcriptTranslationRequestIsCurrent(generation, videoId, mode)
+    ) return;
     const cached = transcriptParagraphCache.has(
       transcriptTranslationCacheKey(segments[index]),
     );
@@ -3242,6 +3295,9 @@ async function translateTranscript() {
 
   transcriptScrollObserver = new IntersectionObserver(
     (observerEntries) => {
+      if (!transcriptTranslationRequestIsCurrent(generation, videoId, mode)) {
+        return;
+      }
       observerEntries
         .filter((entry) => entry.isIntersecting)
         .sort(

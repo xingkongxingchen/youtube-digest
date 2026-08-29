@@ -9,6 +9,14 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 
+async function waitFor(predicate, message, turns = 30) {
+  for (let turn = 0; turn < turns; turn += 1) {
+    if (predicate()) return;
+    await nextTurn();
+  }
+  assert.fail(message);
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -22,15 +30,22 @@ function deferred() {
 function createElement() {
   let html = "";
   let text = "";
-  return {
+  const classes = new Set();
+  const children = [];
+  const node = {
     dataset: {},
     style: {},
-    className: "",
+    children,
     classList: {
-      add() {},
-      remove() {},
-      toggle() {},
-      contains() { return false; },
+      add(...names) { names.forEach((name) => classes.add(name)); },
+      remove(...names) { names.forEach((name) => classes.delete(name)); },
+      toggle(name, force) {
+        const enabled = force === undefined ? !classes.has(name) : Boolean(force);
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+        return enabled;
+      },
+      contains(name) { return classes.has(name); },
     },
     set textContent(value) {
       text = String(value);
@@ -43,13 +58,22 @@ function createElement() {
     get textContent() { return text; },
     set innerHTML(value) { html = String(value); },
     get innerHTML() { return html; },
-    appendChild() {},
+    appendChild(child) { children.push(child); },
     remove() {},
     addEventListener() {},
+    removeEventListener() {},
     setAttribute() {},
     querySelector() { return null; },
     querySelectorAll() { return []; },
   };
+  Object.defineProperty(node, "className", {
+    get() { return [...classes].join(" "); },
+    set(value) {
+      classes.clear();
+      String(value).split(/\s+/).filter(Boolean).forEach((name) => classes.add(name));
+    },
+  });
+  return node;
 }
 
 function loadHarness({
@@ -59,11 +83,24 @@ function loadHarness({
   const localStorage = { ...storageSeed };
   const sessionStorage = {};
   const elements = new Map();
+  const observers = [];
   let activeTab = "transcript";
   const element = (id) => {
     if (!elements.has(id)) elements.set(id, createElement());
     return elements.get(id);
   };
+  const tabs = ["transcript", "overview", "notes"].map((tabName) => ({
+    dataset: { tab: tabName },
+    classList: {
+      toggle(name, enabled) {
+        if (name === "active" && enabled) activeTab = tabName;
+      },
+    },
+  }));
+  const panels = ["transcript", "overview", "notes"].map((tabName) => ({
+    dataset: { panel: tabName },
+    classList: { toggle() {} },
+  }));
   const listeners = { addListener() {} };
   const sandbox = {
     console,
@@ -76,8 +113,19 @@ function loadHarness({
     clearInterval() {},
     requestAnimationFrame(callback) { callback(); },
     IntersectionObserver: class {
-      observe() {}
-      disconnect() {}
+      constructor(callback) {
+        this.callback = callback;
+        this.observed = [];
+        this.disconnected = false;
+        observers.push(this);
+      }
+      observe(target) { this.observed.push(target); }
+      disconnect() { this.disconnected = true; }
+      trigger(indices = this.observed.map((_, index) => index)) {
+        this.callback(
+          indices.map((index) => ({ target: this.observed[index], isIntersecting: true })),
+        );
+      }
     },
     CSS: { escape: (value) => value },
     navigator: { clipboard: { writeText: async () => {} } },
@@ -87,9 +135,26 @@ function loadHarness({
       querySelector(selector) {
         if (selector === ".tab.active") return { dataset: { tab: activeTab } };
         const panel = selector.match(/^\.tab-panel\[data-panel="([^"]+)"\]\.active$/);
-        return panel?.[1] === activeTab ? element(`${activeTab}Panel`) : null;
+        if (panel) return panel[1] === activeTab ? element(`${activeTab}Panel`) : null;
+        const segment = selector.match(/^\.transcript-entry\[data-segment-id="([^"]+)"\]$/);
+        if (segment) {
+          return element("transcriptList").children.find(
+            (row) => row.dataset.segmentId === segment[1],
+          ) || null;
+        }
+        const segmentIndex = selector.match(/^\.transcript-entry\[data-segment-index="([^"]+)"\]$/);
+        if (segmentIndex) {
+          return element("transcriptList").children.find(
+            (row) => row.dataset.segmentIndex === segmentIndex[1],
+          ) || null;
+        }
+        return null;
       },
-      querySelectorAll() { return []; },
+      querySelectorAll(selector) {
+        if (selector === ".tab") return tabs;
+        if (selector === ".tab-panel") return panels;
+        return [];
+      },
       getElementById(id) { return element(id); },
       createElement,
     },
@@ -173,6 +238,7 @@ function loadHarness({
           interfaceTranslationGenerations: { ...interfaceTranslationGenerations },
           translationWorkCounts: { ...translationWorkCounts },
           cache: [...interfaceTranslationCache.entries()],
+          transcriptCache: [...transcriptParagraphCache.entries()],
           failures: [...interfaceTranslationFailures.entries()],
           inFlight: [...interfaceTranslationInFlight.entries()],
         };
@@ -183,8 +249,13 @@ function loadHarness({
       putFailure(surface, id, text, message) {
         interfaceTranslationFailures.set(interfaceTranslationCacheKey(surface, id, text), message);
       },
+      putTranscriptTranslation(segment, translated) {
+        transcriptParagraphCache.set(transcriptTranslationCacheKey(segment), translated);
+      },
       renderLocalizedContent,
       translateInterfaceSegments,
+      translateTranscript,
+      switchTab,
     };
   `;
   vm.runInNewContext(`${read("sidepanel.js")}\n${instrumentation}`, sandbox);
@@ -193,6 +264,7 @@ function loadHarness({
     helpers: sandbox.__YTD_TRANSCRIPT_TESTING__,
     state: sandbox.__YTD_STATE_TESTING__,
     storage: localStorage,
+    observers,
     setActiveTab(tabName) { activeTab = tabName; },
   };
 }
@@ -505,4 +577,219 @@ test("a stale Overview analysis cannot overwrite the new video's analysis", asyn
   await oldRequest;
 
   assert.equal(plain(state.snapshot()).currentAnalysis.marker, "current");
+});
+
+for (const surface of ["overview", "notes"]) {
+  test(`${surface} stops stale batches when hidden and resumes only missing content`, async () => {
+    const staleResponse = deferred();
+    const requests = [];
+    let firstRequest = true;
+    let rerenders = 0;
+    let cacheWrites = 0;
+    const { helpers, state, setActiveTab } = loadHarness({
+      sendMessage(message) {
+        requests.push(message);
+        if (firstRequest) {
+          firstRequest = false;
+          return staleResponse.promise;
+        }
+        return Promise.resolve({
+          success: true,
+          translatedContent: {
+            segments: message.content.segments.map((segment) => ({
+              id: segment.id,
+              text: `新译文-${segment.id}`,
+            })),
+          },
+        });
+      },
+    });
+    state.setWorkers({
+      renderAnalysisResults: () => { rerenders += 1; },
+      renderNotes: () => { rerenders += 1; },
+      saveToCache: async () => { cacheWrites += 1; },
+    });
+
+    const sourceSegments = Array.from({ length: 7 }, (_, index) => ({
+      id: surface === "overview" ? `chapter-${index}-title` : `note-note-${index}`,
+      text: `${surface} source ${index}`,
+    }));
+    const stateUpdate = {
+      currentVideoId: "video-a",
+      modes: { transcript: "original", overview: "original", notes: "original", [surface]: "zh" },
+    };
+    if (surface === "overview") {
+      stateUpdate.currentAnalysis = {
+        chapters: sourceSegments.map((segment) => ({ title: segment.text, summary: "" })),
+        keyQuotes: [],
+        keyMoments: [],
+      };
+    } else {
+      stateUpdate.currentNotes = sourceSegments.map((segment, index) => ({
+        id: `note-${index}`,
+        text: segment.text,
+      }));
+      stateUpdate.currentNotesFilterVideoId = "video-a";
+      stateUpdate.currentNotesOwnerVideoId = "video-a";
+      stateUpdate.currentNotesAreLoaded = true;
+    }
+    state.setState(stateUpdate);
+    state.putTranslation(surface, sourceSegments[0].id, sourceSegments[0].text, "已缓存译文");
+    setActiveTab(surface);
+
+    const oldWork = helpers.dispatchActiveTabWork();
+    await waitFor(() => requests.length === 1, `${surface} did not start its first batch`);
+    assert.deepEqual(
+      plain(requests[0].content.segments).map((segment) => segment.id),
+      sourceSegments.slice(1, 4).map((segment) => segment.id),
+    );
+
+    state.switchTab(surface === "overview" ? "notes" : "transcript");
+    staleResponse.resolve({
+      success: true,
+      translatedContent: {
+        segments: requests[0].content.segments.map((segment) => ({
+          id: segment.id,
+          text: `过期译文-${segment.id}`,
+        })),
+      },
+    });
+    await oldWork;
+    await nextTurn();
+
+    assert.equal(requests.length, 1, "a hidden stale generation sent a second batch");
+    assert.equal(rerenders, 0, "a hidden stale response rerendered its surface");
+    assert.equal(cacheWrites, 0, "a hidden stale response persisted cache");
+    let snapshot = plain(state.snapshot());
+    assert.equal(snapshot.cache.length, 1);
+    assert.equal(snapshot.cache[0][1], "已缓存译文");
+    assert.deepEqual(snapshot.inFlight, []);
+
+    state.switchTab(surface);
+    await waitFor(
+      () => requests.length === 3 && plain(state.snapshot()).cache.length === 7,
+      `${surface} did not resume all missing batches`,
+    );
+    snapshot = plain(state.snapshot());
+    const resumedIds = requests
+      .slice(1)
+      .flatMap((request) => plain(request.content.segments).map((segment) => segment.id));
+    assert.deepEqual(resumedIds, sourceSegments.slice(1).map((segment) => segment.id));
+    assert.ok(snapshot.cache.every(([, value]) => !value.startsWith("过期译文-")));
+    assert.equal(cacheWrites, 2);
+  });
+}
+
+test("Transcript disconnects queued work when hidden and resumes from its cache", async () => {
+  const staleResponse = deferred();
+  const requests = [];
+  let firstRequest = true;
+  const { helpers, state, observers, setActiveTab } = loadHarness({
+    sendMessage(message) {
+      requests.push(message);
+      if (firstRequest) {
+        firstRequest = false;
+        return staleResponse.promise;
+      }
+      return Promise.resolve({
+        success: true,
+        translatedContent: {
+          segments: message.content.segments.map((segment) => ({
+            id: segment.id,
+            text: `新译文-${segment.id}`,
+          })),
+        },
+      });
+    },
+  });
+  state.setWorkers({ saveToCache: async () => {} });
+  const transcript = Array.from({ length: 7 }, (_, index) => ({
+    start: index * 5,
+    duration: 4,
+    text: `Segment ${index} ${"complete thought ".repeat(6)}.`,
+  }));
+  state.setState({
+    currentVideoId: "video-a",
+    currentTranscript: transcript,
+    modes: { transcript: "zh", overview: "original", notes: "original" },
+  });
+  // Use the same grouping helper through the instrumented function so cache
+  // keys exactly match the rows produced by translateTranscript.
+  const segmentSource = plain(helpers.groupTranscriptEntries(transcript));
+  state.putTranscriptTranslation(segmentSource[0], "已缓存字幕");
+  setActiveTab("transcript");
+
+  const oldWork = state.translateTranscript();
+  await waitFor(() => requests.length === 1, "Transcript did not start its first batch");
+  assert.ok(observers.length > 0);
+  const oldObserver = observers.at(-1);
+  oldObserver.trigger();
+
+  state.switchTab("notes");
+  assert.equal(oldObserver.disconnected, true);
+  staleResponse.resolve({
+    success: true,
+    translatedContent: {
+      segments: requests[0].content.segments.map((segment) => ({
+        id: segment.id,
+        text: `过期译文-${segment.id}`,
+      })),
+    },
+  });
+  await oldWork;
+  await nextTurn();
+  assert.equal(requests.length, 1, "the old observer queue sent another batch");
+  assert.equal(plain(state.snapshot()).transcriptCache.length, 1);
+
+  state.switchTab("transcript");
+  await waitFor(
+    () => requests.length >= 2 && plain(state.snapshot()).transcriptCache.length >= 3,
+    "Transcript did not resume its first missing batch",
+  );
+  const resumedObserver = observers.at(-1);
+  resumedObserver.trigger();
+  await waitFor(
+    () => plain(state.snapshot()).transcriptCache.length === segmentSource.length,
+    "Transcript did not resume observer batches",
+  );
+
+  const resumedIds = requests
+    .slice(1)
+    .flatMap((request) => plain(request.content.segments).map((segment) => segment.id));
+  assert.deepEqual(resumedIds, segmentSource.slice(1).map((segment) => segment.id));
+  assert.equal(resumedObserver.disconnected, false);
+  assert.ok(
+    plain(state.snapshot()).transcriptCache.every(([, value]) => !value.startsWith("过期译文-")),
+  );
+});
+
+test("partial provider output uses a Chinese local error and keeps retryable original text", async () => {
+  const { state, setActiveTab } = loadHarness({
+    sendMessage: async () => ({
+      success: true,
+      translatedContent: {
+        segments: [{ id: "chapter-0-title", text: "第一节" }],
+      },
+    }),
+  });
+  setActiveTab("overview");
+  state.setState({ currentVideoId: "video-a", modes: { overview: "zh" } });
+  await state.translateInterfaceSegments(
+    "overview",
+    [
+      { id: "chapter-0-title", text: "First chapter" },
+      { id: "chapter-1-title", text: "Missing chapter" },
+    ],
+    () => {},
+  );
+
+  const failed = state.renderLocalizedContent(
+    "Missing chapter",
+    "overview",
+    "chapter-1-title",
+  );
+  assert.match(failed, /Missing chapter/);
+  assert.match(failed, /部分内容未能翻译/);
+  assert.match(failed, /翻译失败，点击重试/);
+  assert.doesNotMatch(failed, /Translation unavailable/i);
 });

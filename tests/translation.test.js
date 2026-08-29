@@ -407,7 +407,16 @@ test("structured translation batches align by stable ID and expose missing fallb
   );
   assert.equal(aligned[0].id, source[0].id);
   assert.equal(aligned[0].text, "");
-  assert.ok(aligned[0].error, "a missing stable ID must remain an explicit error");
+  assert.match(aligned[0].error, /部分内容未能翻译/);
+  assert.doesNotMatch(aligned[0].error, /Translation unavailable/i);
+  const failedRow = sidepanel.renderTranscriptSegmentContent(
+    source[0],
+    "zh",
+    "",
+    aligned[0].error,
+  );
+  assert.match(failedRow, /A complete first sentence/);
+  assert.match(failedRow, /翻译失败，点击重试/);
   assert.equal(aligned[1].text, "\u7b2c\u4e8c\u4e2a\u5b8c\u6574\u53e5\u5b50\u3002");
 });
 
