@@ -165,7 +165,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Unknown action - still send a response to prevent hanging
   debugLog("[YouTube Digest Content] Unknown action:", message.action);
-  sendResponse({ success: false, error: "Unknown action" });
+  sendResponse({
+    success: false,
+    error: "UNKNOWN_ACTION",
+    message: "未知操作。",
+  });
   return false;
 });
 
@@ -231,8 +235,9 @@ function createDigestButton() {
   const digestButton = document.createElement("button");
   digestButton.id = "ytd-digest-button";
   digestButton.type = "button";
-  digestButton.setAttribute("aria-label", "Open YouTube Digest");
-  digestButton.innerHTML = `<span class="ytd-digest-label">Digest</span>`;
+  digestButton.setAttribute("aria-label", "打开 YouTube Digest");
+  digestButton.title = "打开 YouTube Digest";
+  digestButton.innerHTML = `<span class="ytd-digest-label">摘要</span>`;
 
   // Style the button — rounded pill in our terracotta accent, sized to sit
   // comfortably among YouTube's native action buttons.
@@ -437,12 +442,15 @@ function injectNoteButton() {
   // Create the note button — a soft rounded pill that floats over the player
   const noteButton = document.createElement("button");
   noteButton.id = "ytd-note-button";
+  noteButton.type = "button";
+  noteButton.setAttribute("aria-label", "保存当前时刻为笔记（快捷键 N）");
+  noteButton.title = "保存当前时刻为笔记（快捷键 N）";
   noteButton.innerHTML = `
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right: 7px;">
       <path d="M12 20h9"></path>
       <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
     </svg>
-    <span>Note</span>
+    <span>记笔记</span>
   `;
 
   // Soft rounded pill in the terracotta accent, with a gentle shadow.
@@ -586,7 +594,7 @@ async function saveCurrentNote() {
 
   if (noteButton) {
     noteButton.innerHTML =
-      '<span style="letter-spacing: 0.2px;">SAVING...</span>';
+      '<span style="letter-spacing: 0.2px;">保存中…</span>';
     noteButton.style.pointerEvents = "none";
   }
 
@@ -602,21 +610,21 @@ async function saveCurrentNote() {
     if (result.success) {
       if (noteButton) {
         noteButton.innerHTML =
-          '<span style="letter-spacing: 0.2px;">SAVED</span>';
+          '<span style="letter-spacing: 0.2px;">已保存</span>';
         noteButton.style.background = "#7c8b6f";
       }
       showNoteSavedToast(result.note);
     } else {
       if (noteButton) {
         noteButton.innerHTML =
-          '<span style="letter-spacing: 0.2px;">ERROR</span>';
+          '<span style="letter-spacing: 0.2px;">保存失败</span>';
       }
       console.error("[YouTube Digest] Save note error:", result.error);
     }
   } catch (err) {
     if (noteButton) {
       noteButton.innerHTML =
-        '<span style="letter-spacing: 0.2px;">ERROR</span>';
+        '<span style="letter-spacing: 0.2px;">保存失败</span>';
     }
     console.error("[YouTube Digest] Save note exception:", err);
   }
@@ -641,11 +649,11 @@ function showNoteSavedToast(note) {
   const toast = document.createElement("div");
   toast.id = "ytd-note-toast";
   toast.innerHTML = `
-    <div style="font-weight: 700; margin-bottom: 6px; color: #c8674f;">Note saved</div>
+    <div style="font-weight: 700; margin-bottom: 6px; color: #c8674f;">笔记已保存</div>
     <div style="font-size: 12px; color: #6b6258; margin-bottom: 8px;">${escapeHtmlForContent(note.timestamp)} — ${escapeHtmlForContent(note.videoTitle)}</div>
     <div style="font-size: 13px; line-height: 1.55; color: #2e2a24;">"${escapeHtmlForContent(note.text)}"</div>
     <div style="margin-top: 10px; font-size: 11px;">
-      <a href="${escapeHtmlForContent(note.timestampedUrl)}" style="color: #c8674f; font-weight: 600; text-decoration: none;">Copy link</a>
+      <a href="${escapeHtmlForContent(note.timestampedUrl)}" style="color: #c8674f; font-weight: 600; text-decoration: none;">复制链接</a>
     </div>
   `;
 
@@ -679,7 +687,7 @@ function showNoteSavedToast(note) {
     e.preventDefault();
     try {
       await navigator.clipboard.writeText(note.timestampedUrl);
-      e.target.textContent = "Copied";
+      e.target.textContent = "已复制";
     } catch (err) {
       console.error("Copy failed:", err);
     }

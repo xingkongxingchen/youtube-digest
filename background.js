@@ -36,6 +36,94 @@ async function getSettings() {
   return YTD_SETTINGS.normalize(stored[YTD_SETTINGS.STORAGE_KEY]);
 }
 
+const SAFE_PRODUCT_ERROR_CODES = new Set([
+  "NO_AI_KEY",
+  "EMPTY_AI_RESPONSE",
+  "AI_IDLE_TIMEOUT",
+  "AI_HARD_TIMEOUT",
+  "AI_RESPONSE_TOO_LARGE",
+  "INVALID_AI_KEY",
+  "RATE_LIMITED",
+  "NO_SUPADATA_KEY",
+  "INVALID_SUPADATA_KEY",
+  "NO_TRANSCRIPT",
+  "EMPTY_TRANSCRIPT",
+  "SUPADATA_REQUEST_FAILED",
+  "TRANSCRIPT_FETCH_FAILED",
+  "TRANSCRIPT_JOB_POLL_FAILED",
+  "TRANSCRIPT_PROCESSING_FAILED",
+  "TRANSCRIPT_PROCESSING_TIMEOUT",
+  "ANALYSIS_FAILED",
+  "EXPLANATION_FAILED",
+  "NOTE_SAVE_FAILED",
+  "NOTES_READ_FAILED",
+  "NOTE_DELETE_FAILED",
+  "VIDEO_INFO_FAILED",
+  "TRANSLATION_FAILED",
+  "CONFIG_READ_FAILED",
+  "UNSUPPORTED_TRANSLATION_TARGET",
+  "UNSUPPORTED_TRANSLATION_CONTENT_TYPE",
+  "INVALID_TRANSLATION_SEGMENT_COUNT",
+  "INVALID_TRANSLATION_SEGMENT_ID",
+  "INVALID_TRANSLATION_SEGMENT_TEXT",
+  "TRANSLATION_BATCH_TOO_LARGE",
+  "NO_VALID_TRANSLATION_SEGMENTS",
+  "NO_YOUTUBE_TAB",
+  "CONTENT_RELAY_FAILED",
+]);
+
+function getSafeProductErrorCode(error, fallbackCode) {
+  if (error?.status === 401) return "INVALID_AI_KEY";
+  if (error?.status === 429) return "RATE_LIMITED";
+  return SAFE_PRODUCT_ERROR_CODES.has(error?.code)
+    ? error.code
+    : fallbackCode;
+}
+
+function getSafeUserErrorMessage(error, fallbackMessage = "操作失败，请稍后重试。") {
+  const messagesByCode = {
+    NO_AI_KEY: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
+    EMPTY_AI_RESPONSE: "DeepSeek 返回了空内容，请重试。",
+    AI_IDLE_TIMEOUT: "DeepSeek 请求已连续 50 秒没有响应，请重试。",
+    AI_HARD_TIMEOUT: "DeepSeek 请求超过 120 秒，请重试。",
+    AI_RESPONSE_TOO_LARGE: "DeepSeek 返回的内容过大，请缩短内容后重试。",
+    RATE_LIMITED: "请求过于频繁，请稍后重试。",
+    SUPADATA_REQUEST_FAILED: "Supadata API 请求失败，请稍后重试。",
+    TRANSCRIPT_JOB_POLL_FAILED: "字幕任务查询失败，请稍后重试。",
+    TRANSCRIPT_PROCESSING_FAILED: "字幕处理失败，请稍后重试。",
+    TRANSCRIPT_PROCESSING_TIMEOUT: "字幕处理超时，请稍后重试。",
+    INVALID_TRANSLATION_SEGMENT_COUNT: "每批字幕翻译必须包含 1 至 4 个片段。",
+    INVALID_TRANSLATION_SEGMENT_ID: "字幕翻译片段的 ID 必须稳定且不可重复。",
+    INVALID_TRANSLATION_SEGMENT_TEXT: "字幕翻译片段内容无效或过长。",
+    TRANSLATION_BATCH_TOO_LARGE: "字幕翻译批次内容过大。",
+  };
+
+  if (error?.status === 401) {
+    return "DeepSeek 拒绝了 API 密钥，请在 YouTube Digest Settings 中检查配置。";
+  }
+  if (error?.status === 429) {
+    return "DeepSeek 请求过于频繁，请稍后重试。";
+  }
+  if (SAFE_PRODUCT_ERROR_CODES.has(error?.code) && messagesByCode[error.code]) {
+    return messagesByCode[error.code];
+  }
+  return fallbackMessage;
+}
+
+function createSafeFailure(error, fallbackCode, fallbackMessage) {
+  return {
+    success: false,
+    error: getSafeProductErrorCode(error, fallbackCode),
+    message: getSafeUserErrorMessage(error, fallbackMessage),
+  };
+}
+
+function createCodedError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 const promptFileCache = new Map();
 
 async function loadPromptSection(fileName, heading, variables = {}) {
@@ -45,7 +133,7 @@ async function loadPromptSection(fileName, heading, variables = {}) {
     if (!response.ok) {
       throw new Error(`Could not load prompt file: ${fileName}`);
     }
-    markdown = await response.text();
+    markdown = (await response.text()).replace(/\r\n?/g, "\n");
     promptFileCache.set(fileName, markdown);
   }
 
@@ -81,7 +169,7 @@ async function requestAiCompletion({
   const settings = await getSettings();
   if (!settings.aiApiKey) {
     const error = new Error(
-      "DeepSeek API key not configured. Open YouTube Digest Settings.",
+      "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
     );
     error.code = "NO_AI_KEY";
     throw error;
@@ -139,19 +227,14 @@ async function requestAiCompletion({
 
     const data = await readBoundedAiResponse(response, resetIdleTimeout);
     if (!response.ok) {
-      const errorData = data && typeof data === "object" ? data : {};
-      const error = new Error(
-        errorData.error?.message ||
-          errorData.message ||
-          `DeepSeek error: ${response.status}`,
-      );
+      const error = new Error(`DeepSeek 请求失败（状态码 ${response.status}）。`);
       error.status = response.status;
       throw error;
     }
 
     const text = data.choices?.[0]?.message?.content;
     if (typeof text !== "string" || !text.trim()) {
-      const error = new Error("DeepSeek returned an empty response.");
+      const error = new Error("DeepSeek 返回了空内容，请重试。");
       error.code = "EMPTY_AI_RESPONSE";
       throw error;
     }
@@ -160,14 +243,14 @@ async function requestAiCompletion({
   } catch (error) {
     if (timeoutKind === "idle") {
       const timeoutError = new Error(
-        "DeepSeek request was inactive for 50 seconds. Please Retry.",
+        "DeepSeek 请求已连续 50 秒没有响应，请重试。",
       );
       timeoutError.code = "AI_IDLE_TIMEOUT";
       throw timeoutError;
     }
     if (timeoutKind === "hard") {
       const timeoutError = new Error(
-        "DeepSeek request exceeded the 120-second limit. Please Retry.",
+        "DeepSeek 请求超过 120 秒，请重试。",
       );
       timeoutError.code = "AI_HARD_TIMEOUT";
       throw timeoutError;
@@ -194,7 +277,7 @@ async function readBoundedAiResponse(response, onActivity) {
       responseBytes += byteLength;
       if (responseBytes > AI_PROVIDER_MAX_RESPONSE_BYTES) {
         await reader.cancel?.().catch(() => {});
-        const error = new Error("DeepSeek response exceeded the 2 MiB limit.");
+        const error = new Error("DeepSeek 返回的内容超过 2 MiB 限制。");
         error.code = "AI_RESPONSE_TOO_LARGE";
         throw error;
       }
@@ -211,7 +294,7 @@ async function readBoundedAiResponse(response, onActivity) {
     onActivity();
     const byteLength = new TextEncoder().encode(responseText).byteLength;
     if (byteLength > AI_PROVIDER_MAX_RESPONSE_BYTES) {
-      const error = new Error("DeepSeek response exceeded the 2 MiB limit.");
+      const error = new Error("DeepSeek 返回的内容超过 2 MiB 限制。");
       error.code = "AI_RESPONSE_TOO_LARGE";
       throw error;
     }
@@ -352,7 +435,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "fetchTranscript") {
     handleFetchTranscript(message.videoId)
       .then(sendResponse)
-      .catch((err) => sendResponse({ error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(
+            err,
+            "TRANSCRIPT_FETCH_FAILED",
+            "获取字幕失败，请稍后重试。",
+          ),
+        ),
+      );
     return true; // Keep the message channel open for async response
   }
 
@@ -366,7 +457,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.videoDuration,
     )
       .then(sendResponse)
-      .catch((err) => sendResponse({ error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(err, "ANALYSIS_FAILED", "分析字幕失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
@@ -378,7 +473,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.videoTitle,
     )
       .then(sendResponse)
-      .catch((err) => sendResponse({ error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(err, "EXPLANATION_FAILED", "生成解释失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
@@ -393,7 +492,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.selectedText,
     )
       .then(sendResponse)
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(err, "NOTE_SAVE_FAILED", "保存笔记失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
@@ -401,7 +504,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Get all saved notes
     handleGetNotes(message.videoId)
       .then(sendResponse)
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(err, "NOTES_READ_FAILED", "读取笔记失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
@@ -409,14 +516,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Delete a specific note
     handleDeleteNote(message.noteId)
       .then(sendResponse)
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(err, "NOTE_DELETE_FAILED", "删除笔记失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
   if (message.action === "getVideoInfo") {
     handleGetVideoInfo(message.tabId)
       .then(sendResponse)
-      .catch((err) => sendResponse({ error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(err, "VIDEO_INFO_FAILED", "读取视频信息失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
@@ -429,7 +544,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.videoTitle,
     )
       .then(sendResponse)
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .catch((err) =>
+        sendResponse(
+          createSafeFailure(err, "TRANSLATION_FAILED", "翻译失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
@@ -441,7 +560,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           hasAiKey: !!settings.aiApiKey,
         }),
       )
-      .catch((error) => sendResponse({ error: error.message }));
+      .catch((error) =>
+        sendResponse(
+          createSafeFailure(error, "CONFIG_READ_FAILED", "读取配置失败，请稍后重试。"),
+        ),
+      );
     return true;
   }
 
@@ -573,11 +696,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: true, response });
         } else {
           debugLog("[YouTube Digest BG] No YouTube tab found");
-          sendResponse({ success: false, error: "No YouTube tab found" });
+          sendResponse({
+            success: false,
+            error: "NO_YOUTUBE_TAB",
+            message: "未找到 YouTube 标签页。",
+          });
         }
       } catch (err) {
         console.error("[YouTube Digest BG] Relay error:", err.message);
-        sendResponse({ success: false, error: err.message });
+        sendResponse({
+          success: false,
+          error: "CONTENT_RELAY_FAILED",
+          message: "无法与 YouTube 页面通信，请刷新页面后重试。",
+        });
       }
     })();
     return true; // Keep channel open for async response
@@ -646,7 +777,7 @@ async function handleFetchTranscript(videoId) {
       return {
         success: false,
         error: "NO_SUPADATA_KEY",
-        message: "Supadata API key not configured. Open YouTube Digest Settings.",
+        message: "尚未配置 Supadata API 密钥，请打开 YouTube Digest Settings。",
       };
     }
 
@@ -680,36 +811,35 @@ async function handleFetchTranscript(videoId) {
       return {
         success: false,
         error: "NO_TRANSCRIPT",
-        message: "No native subtitle track is available for this video.",
+        message: "此视频没有可用的原生字幕轨道。",
       };
     }
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
       if (response.status === 401) {
         return {
           success: false,
           error: "INVALID_SUPADATA_KEY",
-          message: "Your Supadata API key is invalid. Open YouTube Digest Settings.",
+          message: "Supadata API 密钥无效，请打开 YouTube Digest Settings 检查配置。",
         };
       }
       if (response.status === 404) {
         return {
           success: false,
           error: "NO_TRANSCRIPT",
-          message: "No subtitles found for this video.",
+          message: "未找到此视频的字幕。",
         };
       }
       if (response.status === 429) {
         return {
           success: false,
           error: "RATE_LIMITED",
-          message:
-            "Supadata rate limit reached. Please wait a minute and try again.",
+          message: "Supadata 请求已达到速率限制，请等待一分钟后重试。",
         };
       }
-      throw new Error(
-        errorData.message || `Supadata API error: ${response.status}`,
+      throw createCodedError(
+        "SUPADATA_REQUEST_FAILED",
+        `Supadata API 请求失败（状态码 ${response.status}）。`,
       );
     }
 
@@ -756,7 +886,7 @@ async function handleFetchTranscript(videoId) {
       return {
         success: false,
         error: "EMPTY_TRANSCRIPT",
-        message: "Supadata returned an empty transcript for this video.",
+        message: "Supadata 返回了空字幕。",
       };
     }
 
@@ -769,10 +899,11 @@ async function handleFetchTranscript(videoId) {
     };
   } catch (error) {
     console.error("Transcript fetch error:", error);
-    return {
-      success: false,
-      error: error.message || "Failed to fetch transcript",
-    };
+    return createSafeFailure(
+      error,
+      "TRANSCRIPT_FETCH_FAILED",
+      "获取字幕失败，请稍后重试。",
+    );
   }
 }
 
@@ -799,7 +930,10 @@ async function pollTranscriptJob(jobId, supadataApiKey) {
     );
 
     if (!response.ok) {
-      throw new Error(`Job polling failed: ${response.status}`);
+      throw createCodedError(
+        "TRANSCRIPT_JOB_POLL_FAILED",
+        `字幕任务查询失败（状态码 ${response.status}）。`,
+      );
     }
 
     const data = await response.json();
@@ -844,13 +978,13 @@ async function pollTranscriptJob(jobId, supadataApiKey) {
     }
 
     if (data.status === "failed") {
-      throw new Error("Transcript processing failed");
+      throw createCodedError("TRANSCRIPT_PROCESSING_FAILED", "字幕处理失败，请稍后重试。");
     }
 
     // Status is 'queued' or 'active' — keep polling
   }
 
-  throw new Error("Transcript processing timed out");
+  throw createCodedError("TRANSCRIPT_PROCESSING_TIMEOUT", "字幕处理超时，请稍后重试。");
 }
 
 // ============================================================
@@ -921,7 +1055,7 @@ async function handleAnalyzeTranscript(
       return {
         success: false,
         error: "NO_AI_KEY",
-        message: "DeepSeek API key not configured. Open YouTube Digest Settings.",
+        message: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
       };
     }
 
@@ -1002,20 +1136,21 @@ async function handleAnalyzeTranscript(
       return {
         success: false,
         error: "INVALID_AI_KEY",
-        message: "DeepSeek rejected the API key.",
+        message: "DeepSeek 拒绝了 API 密钥，请在 YouTube Digest Settings 中检查配置。",
       };
     }
     if (error.status === 429) {
       return {
         success: false,
         error: "RATE_LIMITED",
-        message: "DeepSeek rate-limited this request. Try again shortly.",
+        message: "DeepSeek 请求过于频繁，请稍后重试。",
       };
     }
-    return {
-      success: false,
-      error: error.message || "Failed to analyze transcript",
-    };
+    return createSafeFailure(
+      error,
+      "ANALYSIS_FAILED",
+      "分析字幕失败，请稍后重试。",
+    );
   }
 }
 
@@ -1159,7 +1294,7 @@ async function handleSaveNote(
         videoTitle:
           typeof videoTitle === "string"
             ? videoTitle.slice(0, 500)
-            : "Untitled Video",
+            : "未命名视频",
         channelName:
           typeof channelName === "string" ? channelName.slice(0, 300) : "",
         timestamp: `${minutes}:${String(seconds).padStart(2, "0")}`,
@@ -1194,7 +1329,11 @@ async function handleSaveNote(
     if (!transcript) {
       const transcriptResult = await handleFetchTranscript(videoId);
       if (!transcriptResult.success) {
-        return { success: false, error: "Could not fetch transcript" };
+        return {
+          success: false,
+          error: "TRANSCRIPT_FETCH_FAILED",
+          message: transcriptResult.message || "获取字幕失败，无法保存笔记。",
+        };
       }
       transcript = transcriptResult.transcript;
     }
@@ -1289,7 +1428,7 @@ async function handleSaveNote(
       videoTitle:
         typeof videoTitle === "string"
           ? videoTitle.slice(0, 500)
-          : "Untitled Video",
+          : "未命名视频",
       channelName:
         typeof channelName === "string" ? channelName.slice(0, 300) : "",
       timestamp: formattedTimestamp,
@@ -1309,7 +1448,11 @@ async function handleSaveNote(
     return { success: true, note };
   } catch (error) {
     console.error("[YouTube Digest] Save note error:", error);
-    return { success: false, error: error.message };
+    return createSafeFailure(
+      error,
+      "NOTE_SAVE_FAILED",
+      "保存笔记失败，请稍后重试。",
+    );
   }
 }
 
@@ -1423,7 +1566,11 @@ async function handleGetNotes(videoId) {
 
     return { success: true, notes };
   } catch (error) {
-    return { success: false, error: error.message };
+    return createSafeFailure(
+      error,
+      "NOTES_READ_FAILED",
+      "读取笔记失败，请稍后重试。",
+    );
   }
 }
 
@@ -1438,7 +1585,11 @@ async function handleDeleteNote(noteId) {
     await chrome.storage.local.set({ ytd_notes: notes });
     return { success: true };
   } catch (error) {
-    return { success: false, error: error.message };
+    return createSafeFailure(
+      error,
+      "NOTE_DELETE_FAILED",
+      "删除笔记失败，请稍后重试。",
+    );
   }
 }
 
@@ -1453,7 +1604,7 @@ async function handleExplainSelection(
       return {
         success: false,
         error: "NO_AI_KEY",
-        message: "DeepSeek API key not configured.",
+        message: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
       };
     }
 
@@ -1488,10 +1639,11 @@ async function handleExplainSelection(
     };
   } catch (error) {
     console.error("Explain selection error:", error);
-    return {
-      success: false,
-      error: error.message || "Failed to explain selection",
-    };
+    return createSafeFailure(
+      error,
+      "EXPLANATION_FAILED",
+      "生成解释失败，请稍后重试。",
+    );
   }
 }
 
@@ -1509,7 +1661,7 @@ async function handleExplainSelection(
  */
 async function getTranslationBaseRules(targetLanguage) {
   if (targetLanguage !== "zh") {
-    throw new Error(`Unsupported translation target: ${targetLanguage}`);
+    throw createCodedError("UNSUPPORTED_TRANSLATION_TARGET", "不支持该翻译目标语言。");
   }
   const langName = "Simplified Chinese";
   const langSpecific = await loadPromptSection(
@@ -1525,7 +1677,10 @@ async function getTranslationBaseRules(targetLanguage) {
 function validateTranscriptBatchRequest(content) {
   const segments = content?.segments;
   if (!Array.isArray(segments) || segments.length < 1 || segments.length > 4) {
-    throw new Error("Transcript translation requires 1 to 4 segments");
+    throw createCodedError(
+      "INVALID_TRANSLATION_SEGMENT_COUNT",
+      "每批字幕翻译必须包含 1 至 4 个片段。",
+    );
   }
 
   const seenIds = new Set();
@@ -1534,17 +1689,23 @@ function validateTranscriptBatchRequest(content) {
     const id = typeof segment?.id === "string" ? segment.id.trim() : "";
     const text = typeof segment?.text === "string" ? segment.text.trim() : "";
     if (!/^[A-Za-z0-9:_-]{1,128}$/.test(id) || seenIds.has(id)) {
-      throw new Error("Transcript translation segment IDs must be unique and stable");
+      throw createCodedError(
+        "INVALID_TRANSLATION_SEGMENT_ID",
+        "字幕翻译片段的 ID 必须稳定且不可重复。",
+      );
     }
     if (!text || text.length > 4000) {
-      throw new Error("Transcript translation segment text is invalid or too long");
+      throw createCodedError(
+        "INVALID_TRANSLATION_SEGMENT_TEXT",
+        "字幕翻译片段内容无效或过长。",
+      );
     }
     seenIds.add(id);
     totalCharacters += text.length;
     return { id, text };
   });
   if (totalCharacters > 12000) {
-    throw new Error("Transcript translation batch is too large");
+    throw createCodedError("TRANSLATION_BATCH_TOO_LARGE", "字幕翻译批次内容过大。");
   }
   return normalized;
 }
@@ -1586,7 +1747,7 @@ function normalizeTranslatedSegmentBatch(parsed, sourceSegments) {
       text: translatedById.get(source.id) || "",
       error: translatedById.has(source.id)
         ? ""
-        : "Missing or invalid Chinese translation",
+        : "缺少有效的中文翻译",
     })),
   };
 }
@@ -1609,19 +1770,25 @@ async function handleTranslateContent(
     if (targetLanguage !== "zh") {
       return {
         success: false,
-        error: `Unsupported translation target: ${String(targetLanguage)}`,
+        error: "UNSUPPORTED_TRANSLATION_TARGET",
+        message: "不支持该翻译目标语言。",
       };
     }
     if (!["transcriptBatch", "interfaceBatch"].includes(contentType)) {
       return {
         success: false,
-        error: `Unsupported translation content type: ${String(contentType)}`,
+        error: "UNSUPPORTED_TRANSLATION_CONTENT_TYPE",
+        message: "不支持该翻译内容类型。",
       };
     }
 
     const settings = await getSettings();
     if (!settings.aiApiKey) {
-      return { success: false, error: "DeepSeek API key not configured" };
+      return {
+        success: false,
+        error: "NO_AI_KEY",
+        message: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
+      };
     }
 
     const sourceSegments = validateTranscriptBatchRequest(content);
@@ -1667,13 +1834,18 @@ async function handleTranslateContent(
     if (!aligned.segments.some((segment) => segment.text)) {
       return {
         success: false,
-        error: "Translation returned no valid Chinese segments",
+        error: "NO_VALID_TRANSLATION_SEGMENTS",
+        message: "翻译结果中没有有效的中文片段，请重试。",
       };
     }
     return { success: true, translatedContent: aligned };
   } catch (error) {
     console.error("[YouTube Digest] Translation error:", error);
-    return { success: false, error: error.message || "Translation failed" };
+    return createSafeFailure(
+      error,
+      "TRANSLATION_FAILED",
+      "翻译失败，请稍后重试。",
+    );
   }
 }
 
@@ -1703,14 +1875,12 @@ async function callAiTranslation(
 
     return { success: true, text };
   } catch (error) {
-    if (error.status === 429) {
-      return {
-        success: false,
-        error: "Rate limited — try again in a moment",
-        code: "RATE_LIMITED",
-      };
-    }
-    return { success: false, error: error.message, code: error.code };
+    const failure = createSafeFailure(
+      error,
+      "TRANSLATION_FAILED",
+      "翻译失败，请稍后重试。",
+    );
+    return { ...failure, code: failure.error };
   }
 }
 

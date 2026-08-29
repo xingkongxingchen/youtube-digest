@@ -1,6 +1,7 @@
 const YTD_OPTIONS = (() => {
   const LANGUAGE_STORAGE_KEY = "ytd_options_language";
   const PREVIEW_STORAGE_PREFIX = "youtubeDigestPreview:";
+  const DEFAULT_LANGUAGE = "zh-CN";
   const SUPPORTED_LANGUAGES = new Set(["en", "zh-CN"]);
 
   const COPY = {
@@ -75,7 +76,7 @@ const YTD_OPTIONS = (() => {
         "Could not load saved settings. You can still preview this page.",
     },
     "zh-CN": {
-      pageTitle: "YouTube Digest 设置",
+      pageTitle: "YouTube Digest Settings",
       languageGroupLabel: "界面语言",
       heading: "使用你自己的 API 密钥",
       lede:
@@ -85,8 +86,8 @@ const YTD_OPTIONS = (() => {
       supadataHelp: "用于获取带时间戳的 YouTube 字幕。",
       supadataLink: "创建 Supadata 账号并获取密钥",
       supadataHelpSuffix: "。Supadata 会在引导流程中生成密钥。",
-      aiProvider: "AI 服务",
-      providerSummaryLabel: "支持的 AI 服务",
+      aiProvider: "人工智能服务",
+      providerSummaryLabel: "支持的人工智能服务",
       providerBadge: "当前版本支持",
       deepseekApiKeyLabel: "DeepSeek API 密钥",
       deepseekHelp:
@@ -94,15 +95,15 @@ const YTD_OPTIONS = (() => {
       deepseekLink: "创建 DeepSeek API 密钥",
       deepseekHelpSuffix: "。",
       privacyNote:
-        "使用 AI 功能时，DeepSeek 会收到视频字幕及相关视频上下文。保存前请查看 DeepSeek 的服务条款和价格。",
+        "使用人工智能功能时，DeepSeek 会收到视频字幕及相关视频上下文。保存前请查看 DeepSeek 的服务条款和价格。",
       saveSettings: "保存设置",
       localRemix: "本地改造",
-      customizationTitle: "想使用其他 AI 模型？",
-      customizationPurpose: "编辑并复制一段可安全交给编程 Agent 的提示词",
-      agentBadge: "可交给编程 Agent",
+      customizationTitle: "想使用其他人工智能模型？",
+      customizationPurpose: "编辑并复制一段可安全交给编程助手的提示词",
+      agentBadge: "可交给编程助手",
       customizationIntro: "你可以直接编辑提示词。复制前完成以下三步：",
       customizationStepFolder:
-        "在编程 Agent 中打开 YouTube Digest 解压后的项目文件夹。",
+        "在编程助手中打开 YouTube Digest 解压后的项目文件夹。",
       customizationStepReplace:
         "把 [PROVIDER] 和 [MODEL] 替换成你想使用的服务和模型。",
       customizationStepKeys:
@@ -112,7 +113,7 @@ const YTD_OPTIONS = (() => {
       customizationReminder:
         "复制前，请先把 [PROVIDER] 和 [MODEL] 替换成你想使用的服务和模型。",
       customizationPrompt:
-        "请把当前本地 YouTube Digest 工作区改为使用 [PROVIDER] 提供的 [MODEL]。只在当前工作区中操作。编辑前，先确认其中包含 manifest.json，且 manifest 中的 name 是 YouTube Digest。如果验证失败，请停止，并让我在编程 Agent 中打开 YouTube Digest 解压后的项目文件夹。不要搜索其他文件夹，不要编辑猜测的副本，不要假设安装路径，也不要声称 Chrome 可以显示操作系统中的绝对源码路径。更新该服务的 API endpoint、请求格式和最少的 Chrome host permissions。保留用户自带密钥模式和 Chrome 本地存储。不要把 API 密钥写入源代码、提交记录、日志、截图、这段提示词或聊天；代码准备好后，请告诉我应该在哪里自行填写密钥。DeepSeek 专用的请求参数和重试逻辑继续只用于 DeepSeek。新服务的专属规则请单独处理，避免相互影响。更新 README.md、README.zh-CN.md、PRIVACY.md、SECURITY.md 和测试。运行 npm test、npm run check 和 npm run package。最后，说明如何重新加载已解压的扩展，并在真实 YouTube 视频上测试。",
+        "请把当前本地 YouTube Digest 工作区改为使用 [PROVIDER] 提供的 [MODEL]。只在当前工作区中操作。编辑前，先确认其中包含 manifest.json，且 manifest 中的名称是 YouTube Digest。如果验证失败，请停止，并让我在编程助手中打开 YouTube Digest 解压后的项目文件夹。不要搜索其他文件夹，不要编辑猜测的副本，不要假设安装路径，也不要声称 Chrome 可以显示操作系统中的绝对源码路径。更新该服务的 API 接口地址、请求格式和最少的 Chrome 主机权限。保留用户自带密钥模式和 Chrome 本地存储。不要把 API 密钥写入源代码、提交记录、日志、截图、这段提示词或聊天；代码准备好后，请告诉我应该在哪里自行填写密钥。DeepSeek 专用的请求参数和重试逻辑继续只用于 DeepSeek。新服务的专属规则请单独处理，避免相互影响。更新 README.md、README.zh-CN.md、PRIVACY.md、SECURITY.md 和测试。运行 npm test、npm run check 和 npm run package。最后，说明如何重新加载已解压的扩展，并在真实 YouTube 视频上测试。",
       copyCustomizationPrompt: "复制编辑后的提示词",
       localData: "本地数据",
       localDataHelp:
@@ -123,7 +124,7 @@ const YTD_OPTIONS = (() => {
       footer:
         '完整数据流说明请参阅仓库中的 <a href="PRIVACY.md" target="_blank">PRIVACY.md</a>。',
       migrationWarning:
-        "已安全移除自定义服务设置。Supadata 密钥已保留，AI 密钥已清除。请输入 DeepSeek API 密钥以继续使用。",
+        "已安全移除自定义服务设置。Supadata 密钥已保留，人工智能服务密钥已清除。请输入 DeepSeek API 密钥以继续使用。",
       saving: "正在保存…",
       addSupadataKey: "请添加 Supadata API 密钥。",
       addDeepseekKey: "请添加 DeepSeek API 密钥。",
@@ -142,7 +143,7 @@ const YTD_OPTIONS = (() => {
   };
 
   function normalizeLanguage(language) {
-    return SUPPORTED_LANGUAGES.has(language) ? language : "en";
+    return SUPPORTED_LANGUAGES.has(language) ? language : DEFAULT_LANGUAGE;
   }
 
   function translate(language, key, params = {}) {
@@ -357,10 +358,9 @@ const YTD_OPTIONS = (() => {
     const copyStatus = doc.getElementById("copyStatus");
     const saveStatus = doc.getElementById("saveStatus");
     const dataStatus = doc.getElementById("dataStatus");
-    const languageButtons = [...doc.querySelectorAll("[data-language]")];
     const statusStates = new Map();
     const promptDrafts = createPromptDrafts();
-    let currentLanguage = "en";
+    let currentLanguage = DEFAULT_LANGUAGE;
 
     function renderStatus(element) {
       const state = statusStates.get(element);
@@ -408,7 +408,6 @@ const YTD_OPTIONS = (() => {
         customizationPrompt,
         nextDraft.prompt,
       );
-      updateLanguageButtonState(languageButtons, currentLanguage);
       for (const element of statusStates.keys()) renderStatus(element);
     }
 
@@ -432,11 +431,7 @@ const YTD_OPTIONS = (() => {
     }
 
     async function loadOptions() {
-      try {
-        applyLanguage(await readPreferredLanguage(storage));
-      } catch (_error) {
-        applyLanguage("en");
-      }
+      applyLanguage(DEFAULT_LANGUAGE);
       await loadSettings();
     }
 
@@ -513,14 +508,6 @@ const YTD_OPTIONS = (() => {
       .addEventListener("click", clearCachedDigests);
     doc.getElementById("clearNotesBtn").addEventListener("click", clearNotes);
     doc.getElementById("resetBtn").addEventListener("click", resetAllData);
-    for (const button of languageButtons) {
-      button.addEventListener("click", async () => {
-        const language = button.dataset.language;
-        applyLanguage(language);
-        await persistPreferredLanguage(storage, language);
-      });
-    }
-
     if (doc.readyState === "loading") {
       doc.addEventListener("DOMContentLoaded", loadOptions, { once: true });
     } else {

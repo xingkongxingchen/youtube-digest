@@ -49,7 +49,7 @@ var YTD_SETTINGS = (() => {
   function canonicalYouTubeUrl(videoId) {
     const normalized = String(videoId || "").trim();
     if (!/^[A-Za-z0-9_-]{6,20}$/.test(normalized)) {
-      throw new Error("Invalid YouTube video ID.");
+      throw new Error("无效的 YouTube 视频标识符。");
     }
     return `https://www.youtube.com/watch?v=${normalized}`;
   }
