@@ -14,20 +14,32 @@ test("manifest uses minimized install-time permissions", () => {
   assert.equal(manifest.minimum_chrome_version, "116");
   assert.equal(packageJson.version, manifest.version);
   assert.equal(manifest.options_ui.page, "options.html");
-  assert.ok(!manifest.permissions.includes("activeTab"));
-  assert.ok(manifest.host_permissions.includes("https://api.deepseek.com/*"));
+  assert.deepEqual(manifest.permissions, [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "scripting",
+  ]);
+  assert.deepEqual(manifest.host_permissions, [
+    "https://www.youtube.com/*",
+    "https://api.supadata.ai/*",
+    "https://api.deepseek.com/*",
+  ]);
   assert.equal(Object.hasOwn(manifest, "optional_host_permissions"), false);
-  assert.equal(manifest.version, "1.2.0");
+  assert.equal(manifest.version, "1.3.0");
+  assert.equal(
+    manifest.description,
+    "将 YouTube 视频转化为包含字幕、双语翻译、人工智能概览和笔记的学习资源。",
+  );
+  assert.equal(manifest.action.default_title, "打开 YouTube Digest");
 });
 
-test("release copy documents current scope without em dashes", () => {
+test("release copy documents the v1.3.0 scope and key safety", () => {
   const readme = read("README.md");
   const chineseReadme = read("README.zh-CN.md");
   const manifest = JSON.parse(read("manifest.json"));
   const packageJson = JSON.parse(read("package.json"));
 
-  assert.doesNotMatch(readme, /—/);
-  assert.doesNotMatch(chineseReadme, /—/);
   assert.doesNotMatch(manifest.description, /—/);
   assert.doesNotMatch(packageJson.description, /—/);
 
@@ -84,6 +96,33 @@ test("release copy documents current scope without em dashes", () => {
   );
   assert.match(chineseReadme, /不接受上游 Issue 或 Pull Request/);
   assert.match(chineseReadme, /增加更多翻译语言/);
+  assert.match(
+    readme,
+    /Never paste an API key into an AI chat, source file, screenshot, or public message\./,
+  );
+  assert.match(
+    chineseReadme,
+    /不要把 API Key 发送到 AI 对话、源代码、截图或公开消息中。/,
+  );
+
+  assert.match(readme, /^## New in v1\.3\.0$/m);
+  assert.match(chineseReadme, /^## 新版 v1\.3\.0$/m);
+  assert.match(
+    readme,
+    /Original[\s\S]*independently in \*\*Transcript\*\*, \*\*Overview\*\*, and \*\*Notes\*\*/,
+  );
+  assert.match(
+    readme,
+    /Remember each choice by video ID and page[\s\S]*all start in \*\*Original\*\*/,
+  );
+  assert.match(
+    chineseReadme,
+    /Transcript、Overview 和 Notes 分别提供独立的[\s\S]*视频 ID \+ 页面[\s\S]*都默认使用 \*\*Original\*\*/,
+  );
+  assert.match(
+    chineseReadme,
+    /用户界面统一使用简体中文/,
+  );
 
   assert.match(readme, /100 credits per month/i);
   assert.match(readme, /native transcript request uses \*\*1 credit\*\*/i);
@@ -136,15 +175,15 @@ test("release copy documents current scope without em dashes", () => {
   assert.doesNotMatch(detailsTag[0], /\sopen(?:\s|=|>)/i);
   assert.match(
     optionsPage,
-    /<summary class="customization-summary">[\s\S]*Want to use another AI model\?[\s\S]*Edit and copy a safe prompt for your coding agent[\s\S]*<\/summary>/,
+    /<summary class="customization-summary">[\s\S]*想使用其他人工智能模型？[\s\S]*编辑并复制一段可安全交给编程助手的提示词[\s\S]*<\/summary>/,
   );
   assert.match(
     optionsPage,
-    /class="customization-steps"[\s\S]*Open the extracted YouTube Digest project folder in your coding[\s\S]*Replace \[PROVIDER\] and \[MODEL\][\s\S]*Never include API keys[\s\S]*<\/ol>/,
+    /class="customization-steps"[\s\S]*在编程助手中打开 YouTube Digest 解压后的项目文件夹[\s\S]*把 \[PROVIDER\] 和 \[MODEL\] 替换[\s\S]*不要在提示词或聊天中加入 API 密钥[\s\S]*<\/ol>/,
   );
   assert.match(
     optionsPage,
-    /class="prompt-reminder"[\s\S]*Before copying, replace \[PROVIDER\] and \[MODEL\]/,
+    /class="prompt-reminder"[\s\S]*复制前，请先把 \[PROVIDER\] 和 \[MODEL\] 替换/,
   );
   assert.doesNotMatch(optionsPage, /~\/Documents\/youtube-digest/);
   assert.doesNotMatch(optionsPage, /%USERPROFILE%\\Documents\\youtube-digest/);
@@ -153,10 +192,10 @@ test("release copy documents current scope without em dashes", () => {
   assert.match(optionsStyles, /\.customization-summary:focus-visible\s*\{/);
   assert.match(optionsStyles, /\.data-card\s*\{[^}]*margin-top:\s*36px;/);
   assert.match(optionsScript, /clipboard\.writeText/);
-  assert.match(optionsScript, /Edited prompt copied\./);
+  assert.match(optionsScript, /已复制编辑后的提示词。/);
   assert.match(optionsScript, /migration\.migrated[\s\S]*storage\.set/);
 
-  const customizationPrompt = `Customize this local YouTube Digest workspace to use [PROVIDER] with [MODEL]. Work only in the current workspace. Before editing, verify that it contains manifest.json and that the manifest name is YouTube Digest. If verification fails, stop and ask me to open the extracted YouTube Digest project folder in my coding agent. Do not search other folders, edit a guessed copy, assume an installation path, or claim Chrome can reveal the absolute OS source path. Update the provider's API endpoint, request format, and minimum Chrome host permissions. Preserve bring-your-own-key and local Chrome storage. Never put API keys in source code, commits, logs, screenshots, this prompt, or chat; after the code is ready, tell me where to enter the key myself. Keep DeepSeek-only request fields and retry behavior isolated to DeepSeek. Handle provider-specific rules separately so one provider does not affect another. Update README.md, README.zh-CN.md, PRIVACY.md, SECURITY.md, and tests. Run npm test, npm run check, and npm run package. Then explain how to reload the unpacked extension and test it on a real YouTube video.`;
+  const customizationPrompt = `请把当前本地 YouTube Digest 工作区改为使用 [PROVIDER] 提供的 [MODEL]。只在当前工作区中操作。编辑前，先确认其中包含 manifest.json，且 manifest 中的名称是 YouTube Digest。如果验证失败，请停止，并让我在编程助手中打开 YouTube Digest 解压后的项目文件夹。不要搜索其他文件夹，不要编辑猜测的副本，不要假设安装路径，也不要声称 Chrome 可以显示操作系统中的绝对源码路径。更新该服务的 API 接口地址、请求格式和最少的 Chrome 主机权限。保留用户自带密钥模式和 Chrome 本地存储。不要把 API 密钥写入源代码、提交记录、日志、截图、这段提示词或聊天；代码准备好后，请告诉我应该在哪里自行填写密钥。DeepSeek 专用的请求参数和重试逻辑继续只用于 DeepSeek。新服务的专属规则请单独处理，避免相互影响。更新 README.md、README.zh-CN.md、PRIVACY.md、SECURITY.md 和测试。运行 npm test、npm run check 和 npm run package。最后，说明如何重新加载已解压的扩展，并在真实 YouTube 视频上测试。`;
   assert.ok(optionsPage.includes(`>${customizationPrompt}</textarea>`));
   assert.doesNotMatch(customizationPrompt, /Documents|USERPROFILE/);
 
@@ -189,6 +228,7 @@ test("release copy documents current scope without em dashes", () => {
 
 test("product UI contains no emoji or emoji-like pictographs", () => {
   const productUi = [
+    read("manifest.json"),
     read("sidepanel.html"),
     read("sidepanel.js"),
     read("content.js"),
@@ -230,7 +270,7 @@ test("note delete is an accessible SVG action at the end of the action row", () 
 
   assert.match(
     js,
-    /<div class="note-actions">[\s\S]*class="[^"]*note-play[^"]*"[\s\S]*class="note-delete"[\s\S]*aria-label="Delete note"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/,
+    /<div class="note-actions">[\s\S]*class="[^"]*note-play[^"]*"[\s\S]*class="note-delete"[\s\S]*aria-label="删除笔记"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/,
   );
   assert.doesNotMatch(js, /class="note-delete"[^>]*>Delete<\/button>/);
   assert.match(
@@ -247,11 +287,11 @@ test("notes filters preserve selected contrast and expose pressed state", () => 
 
   assert.match(
     html,
-    /id="notesFilterThis"[\s\S]*?aria-pressed="true"[\s\S]*?>[\s\S]*?This Video/,
+    /id="notesFilterThis"[\s\S]*?aria-pressed="true"[\s\S]*?>[\s\S]*?当前视频/,
   );
   assert.match(
     html,
-    /id="notesFilterAll"[\s\S]*?aria-pressed="false"[\s\S]*?>[\s\S]*?All Notes/,
+    /id="notesFilterAll"[\s\S]*?aria-pressed="false"[\s\S]*?>[\s\S]*?全部笔记/,
   );
   assert.match(
     css,

@@ -40,7 +40,7 @@ test("all timestamped transcript row clicks use the selection-aware seek helper"
 test("the selection toolbar preserves selection and contains pointer events", () => {
   assert.match(
     source,
-    /class="explain-btn"[\s\S]*?>Explain<[\s\S]*class="selection-note-btn"[\s\S]*?>Note</,
+    /class="explain-btn"[\s\S]*?>\s*解释\s*<[\s\S]*class="selection-note-btn"[\s\S]*?>\s*保存为笔记\s*</,
   );
   assert.match(
     source,
@@ -94,7 +94,7 @@ test("the transcript view restores without resuming automatic scrolling", () => 
   );
   assert.match(
     source,
-    /pendingTranscriptViewState = await loadTranscriptViewState\(videoId\)/,
+    /(?:pendingTranscriptViewState\s*=\s*await loadTranscriptViewState\(videoId\)|const transcriptViewState\s*=\s*await loadTranscriptViewState\(videoId\)[\s\S]*?pendingTranscriptViewState\s*=\s*transcriptViewState)/,
   );
   assert.match(
     source,

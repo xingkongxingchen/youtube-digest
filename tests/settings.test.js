@@ -58,6 +58,6 @@ test("Supadata receives a canonical YouTube URL", () => {
   );
   assert.throws(
     () => settings.canonicalYouTubeUrl('"><script>'),
-    /Invalid YouTube video ID/,
+    /无效的 YouTube 视频标识符/,
   );
 });

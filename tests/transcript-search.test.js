@@ -98,10 +98,19 @@ test("transcript search UI is wired for keyboard and button navigation", () => {
   const html = read("sidepanel.html");
   const js = read("sidepanel.js");
 
-  assert.match(html, /id="transcriptSearchInput"[\s\S]*aria-controls="transcriptList"/);
+  assert.match(
+    html,
+    /id="transcriptSearchInput"[\s\S]*placeholder="搜索词语或短语"[\s\S]*aria-label="搜索 Transcript"[\s\S]*aria-controls="transcriptList"/,
+  );
   assert.match(html, /id="transcriptSearchCount"[\s\S]*aria-live="polite"/);
-  assert.match(html, /id="transcriptSearchPrevBtn"/);
-  assert.match(html, /id="transcriptSearchNextBtn"/);
+  assert.match(
+    html,
+    /id="transcriptSearchPrevBtn"[\s\S]*aria-label="上一个 Transcript 匹配项"[\s\S]*title="上一个匹配项（Shift \+ Enter）"/,
+  );
+  assert.match(
+    html,
+    /id="transcriptSearchNextBtn"[\s\S]*aria-label="下一个 Transcript 匹配项"[\s\S]*title="下一个匹配项（Enter）"/,
+  );
   assert.match(js, /event\.key === "Enter"[\s\S]*event\.shiftKey \? -1 : 1/);
   assert.match(js, /event\.key === "Escape"[\s\S]*resetTranscriptSearch/);
   assert.match(js, /mark\.scrollIntoView\([\s\S]*block: "center"/);

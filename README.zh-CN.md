@@ -17,13 +17,13 @@ YouTube Digest 是一个需要自行提供 API Key 的开源项目，通过 GitH
 
 ![YouTube Digest 双语演示](YouTube%20Digest%20demo%20bilingual.png)
 
-## v1.2.0 更新
+## 新版 v1.3.0
 
-- 搜索字幕中的单词或短语，并依次查看所有匹配位置。
-- 在 Transcript、Overview 和 Notes 中共用 Original、中文和双语设置。新视频默认保持 Original，不会自动消耗翻译 token。
-- 只翻译当前可见的 Overview 和 Notes 内容，并通过小批次渐进显示和缓存结果。
-- 选中字幕后，可以直接讲解内容或保存带时间戳的笔记。
-- 页面跳转后保留字幕阅读位置，并在离开 YouTube 视频页面时自动关闭侧边栏。
+- Transcript、Overview 和 Notes 分别提供独立的 **Original**、**中文**、**双语**选项，每个页面都使用与 Transcript 一致的切换形式。
+- 系统按“视频 ID + 页面”分别记忆选择；打开新视频时，三个页面都默认使用 **Original**，不会意外开始翻译。
+- 只翻译当前活动页面，以小批次渐进显示结果；再次进入该页面时会复用已经缓存的翻译。
+- 如果部分内容翻译失败，仍会保留原文，并且只需局部重试失败内容，不会阻塞整个页面。
+- 除 YouTube Digest、Settings、Transcript、Overview、Notes、Original、Copy 等约定标签，以及品牌名和技术名词外，用户界面统一使用简体中文。
 
 ## 让你的编程 Agent 帮你安装
 
@@ -103,17 +103,17 @@ API Key 和设置保存在你设备上的 Chrome 扩展本地存储中。发布�
 
 1. 打开一个有字幕的普通 YouTube 视频页面。
 2. 点击 YouTube Digest 扩展图标，打开侧边栏。
-3. 阅读带时间戳的字幕，或选择 **Original**、**中文**、**双语**。
-4. 打开 **Overview**，查看 AI 生成的章节和重点引用。
+3. 在 **Transcript** 中阅读带时间戳的字幕，并为该页面选择 **Original**、**中文**或**双语**。
+4. 打开 **Overview** 查看 AI 生成的章节和重点引用，并使用该页面独立的 **Original**、**中文**或**双语**选项。
 5. 选中字幕，获取 AI 内容讲解。
-6. 从播放器或重点引用中保存笔记，之后可以在 **Notes** 中查看。
+6. 从播放器或重点引用中保存笔记，之后可以在 **Notes** 中通过该页面独立的 **Original**、**中文**或**双语**选项查看。
 
 ## 当前支持范围
 
 - Chrome 116 或更高版本。
 - 标准的 `youtube.com/watch` 视频页面。
 - Supadata 能够返回的原生字幕。YouTube Digest 会优先请求英文字幕，也可能显示其他可用的原生语言。
-- 原文、简体中文和双语对照字幕。
+- Transcript、Overview 和 Notes 各自独立的原文、简体中文和双语对照视图。
 - AI 概览、选中文本讲解、翻译和自动润色笔记。
 - 本地笔记，以及最近字幕、概览和翻译的本地缓存。
 - 发布版本的所有 AI 功能都使用 DeepSeek V4 Flash。其他服务需要修改本地代码，不属于发布版本的支持范围。

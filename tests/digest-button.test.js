@@ -235,6 +235,9 @@ test("Digest button skips a hidden responsive toolbar", () => {
   assert.equal(hiddenGroup.children.length, 0);
   assert.equal(visibleRow.children.length, 1);
   assert.equal(visibleGroup.children[0].id, "ytd-digest-button");
+  assert.equal(visibleGroup.children[0]["aria-label"], "打开 YouTube Digest");
+  assert.equal(visibleGroup.children[0].title, "打开 YouTube Digest");
+  assert.match(visibleGroup.children[0].innerHTML, />摘要<\/span>/);
   assert.equal(visibleGroup.children[1], nativeButton);
   assert.match(visibleGroup.children[0].style.cssText, /flex:\s*0 0 auto/);
   assert.match(visibleGroup.children[0].style.cssText, /width:\s*max-content/);

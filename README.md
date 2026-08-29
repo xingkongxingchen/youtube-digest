@@ -15,13 +15,13 @@ YouTube Digest is a bring-your-own-key project installed locally from GitHub. It
 
 ![YouTube Digest demo](YouTube%20Digest%20demo.png)
 
-## New in v1.2.0
+## New in v1.3.0
 
-- Search transcript words or phrases and move through every match.
-- Use one Original, Chinese, or bilingual setting across Transcript, Overview, and Notes. New videos stay in Original by default.
-- Translate visible Overview and Notes content progressively in small cached batches.
-- Explain selected transcript text or save it directly as a timestamped note.
-- Keep your transcript position across navigation, with the panel closing automatically outside YouTube video pages.
+- Choose **Original**, **中文**, or **双语** independently in **Transcript**, **Overview**, and **Notes**, using the same familiar control on each page.
+- Remember each choice by video ID and page. A new video's three pages all start in **Original**, so translation never begins unexpectedly.
+- Translate only the active page, show results progressively in small batches, and reuse the page's cached translations when you return.
+- Keep the original content available if a translation fails, with a local retry for only the affected content instead of blocking the whole page.
+- Use a Simplified Chinese interface throughout, while retaining the agreed labels—YouTube Digest, Settings, Transcript, Overview, Notes, Original, and Copy—and established brand or technical names.
 
 ## Install with your coding agent
 
@@ -101,17 +101,17 @@ Keys and settings are stored in Chrome's local extension storage on your device.
 
 1. Open a standard YouTube watch page with captions.
 2. Click the YouTube Digest extension icon to open the side panel.
-3. Read the timestamped transcript, or choose **Original**, **中文**, or **双语**.
-4. Open **Overview** when you want AI-generated chapters and key quotes.
+3. In **Transcript**, choose **Original**, **中文**, or **双语** for the timestamped transcript.
+4. Open **Overview** for AI-generated chapters and key quotes, and choose that page's own **Original**, **中文**, or **双语** view.
 5. Select transcript text when you want an AI explanation.
-6. Save a note from the player or a key quote, then revisit it from **Notes**.
+6. Save a note from the player or a key quote, then revisit it from **Notes** in that page's independent **Original**, **中文**, or **双语** view.
 
 ## What works today
 
 - Google Chrome 116 or newer, using the Side Panel API.
 - Standard `youtube.com/watch` video pages.
 - Native subtitle tracks returned by Supadata. YouTube Digest prefers English when available, but may show another native language.
-- Original, Simplified Chinese, and aligned bilingual transcript views.
+- Independent Original, Simplified Chinese, and aligned bilingual views for Transcript, Overview, and Notes.
 - AI overviews, selected-text explanations, translation, and automatic note polishing.
 - Local notes and a local cache for recent transcript and digest results.
 - DeepSeek V4 Flash for all published AI features. Other providers require a local code adaptation and are not supported by this published version.

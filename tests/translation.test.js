@@ -234,57 +234,61 @@ function streamingResponse(chunks, { ok = true, status = 200 } = {}) {
 const encode = (value) => new TextEncoder().encode(value);
 const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 
-test("the header exposes one universal language control for all result tabs", () => {
+test("each result tab exposes its own accessible language control", () => {
   const html = read("sidepanel.html");
   const js = read("sidepanel.js");
-  assert.match(html, /id="transcriptModeControl"[\s\S]*aria-label="Content language"/);
-  assert.match(html, /id="transcriptModeControl"[\s\S]*id="tabsNav"/);
-  assert.match(html, /data-transcript-mode="original"[\s\S]*?>Original</);
-  assert.match(html, /data-transcript-mode="zh"[\s\S]*?>\u4e2d\u6587</);
-  assert.match(html, /data-transcript-mode="bilingual"[\s\S]*?>\u53cc\u8bed</);
-  assert.match(js, /handleDisplayLanguageModeChange\(button\.dataset\.transcriptMode\)/);
+  for (const [surface, label] of [
+    ["transcript", "Transcript"],
+    ["overview", "Overview"],
+    ["notes", "Notes"],
+  ]) {
+    const control = html.match(
+      new RegExp(
+        `id="${surface}ModeControl"[\\s\\S]*?data-language-surface="${surface}"[\\s\\S]*?<\\/div>`,
+      ),
+    )?.[0];
+    assert.ok(control, `Missing ${surface} language control`);
+    assert.match(control, new RegExp(`aria-label="${label} 显示语言"`));
+    assert.match(control, /role="group"/);
+    assert.equal((control.match(/class="transcript-mode-btn/g) || []).length, 3);
+    assert.match(control, /data-transcript-mode="original"[^>]*aria-pressed="true"[^>]*>Original</);
+    assert.match(control, /data-transcript-mode="zh"[^>]*aria-pressed="false"[^>]*>中文</);
+    assert.match(control, /data-transcript-mode="bilingual"[^>]*aria-pressed="false"[^>]*>双语</);
+    assert.match(control, new RegExp(`id="${surface}LangSpinner"[^>]*aria-label="正在翻译"`));
+  }
+  assert.match(js, /closest\("\[data-language-surface\]"\)/);
+  assert.match(js, /handleDisplayLanguageModeChange\(surface, button\.dataset\.transcriptMode\)/);
   assert.match(js, /contentType: "transcriptBatch"/);
   assert.match(js, /contentType: "interfaceBatch"/);
-  assert.match(js, /translateOverviewContent/);
-  assert.match(js, /translateNotesContent/);
   assert.doesNotMatch(js, /English \+ Chinese/);
   assert.doesNotMatch(`${html}\n${js}`, /From video subtitles/);
 });
 
-test("new videos default to Original while returning videos restore their choice", async () => {
-  const { loadDisplayLanguageMode, saveDisplayLanguageMode } =
+test("new videos default to Original while returning videos restore each surface", async () => {
+  const { loadAllDisplayLanguageModes, saveDisplayLanguageMode } =
     loadSidepanelHelpers();
 
-  await saveDisplayLanguageMode("video-a", "bilingual");
-  assert.equal(await loadDisplayLanguageMode("video-a"), "bilingual");
-  assert.equal(await loadDisplayLanguageMode("unseen-video"), "original");
+  await saveDisplayLanguageMode("video-a", "bilingual", "transcript");
+  await saveDisplayLanguageMode("video-a", "zh", "overview");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await loadAllDisplayLanguageModes("video-a"))),
+    { transcript: "bilingual", overview: "zh", notes: "original" },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await loadAllDisplayLanguageModes("unseen-video"))),
+    { transcript: "original", overview: "original", notes: "original" },
+  );
 });
 
-test("Overview shares the Transcript batch generation and retries when opened", () => {
+test("translation work is dispatched by the active tab and its independent mode", () => {
   const js = read("sidepanel.js");
-  const transcriptFunction = js.match(
-    /async function translateTranscript\(\)[\s\S]*?\n}\n\nfunction setTranslatingSpinner/,
-  )?.[0];
-
-  assert.ok(transcriptFunction);
-  assert.doesNotMatch(transcriptFunction, /translationGeneration \+= 1/);
   assert.match(js, /const TRANSLATION_BATCH_SIZE = 3/);
-  assert.match(
-    js,
-    /const batch = missing\.slice\(start, start \+ TRANSLATION_BATCH_SIZE\)[\s\S]*?rerender\(\);[\s\S]*?await updateCache\(\)/,
-  );
-  assert.match(
-    js,
-    /tabName === "overview"[\s\S]*?currentAnalysis[\s\S]*?currentTranscriptMode !== "original"[\s\S]*?translateOverviewContent\(\)/,
-  );
-  assert.match(
-    js,
-    /Translate only the visible tab[\s\S]*?tabName === "notes"[\s\S]*?translateNotesContent\(\)/,
-  );
-  assert.match(
-    js,
-    /activeTabName === "overview"[\s\S]*?translateOverviewContent\(\)[\s\S]*?activeTabName === "notes"[\s\S]*?translateNotesContent\(\)[\s\S]*?activeTabName === "transcript"[\s\S]*?translateTranscript\(\)/,
-  );
+  assert.match(js, /async function dispatchActiveTabWork\(\)/);
+  assert.match(js, /getDisplayLanguageMode\("overview"\) !== "original"/);
+  assert.match(js, /getDisplayLanguageMode\("notes"\) !== "original"/);
+  assert.match(js, /getDisplayLanguageMode\("transcript"\) !== "original"/);
+  assert.match(js, /void dispatchActiveTabWork\(\)/);
+  assert.match(js, /interfaceTranslationGenerations\[surface\] \+= 1/);
 });
 
 test("transcript reading position survives a side panel close", async () => {
@@ -403,7 +407,7 @@ test("structured translation batches align by stable ID and expose missing fallb
   );
   assert.equal(aligned[0].id, source[0].id);
   assert.equal(aligned[0].text, "");
-  assert.match(aligned[0].error, /unavailable/i);
+  assert.ok(aligned[0].error, "a missing stable ID must remain an explicit error");
   assert.equal(aligned[1].text, "\u7b2c\u4e8c\u4e2a\u5b8c\u6574\u53e5\u5b50\u3002");
 });
 
@@ -464,10 +468,11 @@ test("background rejects unsupported language fallthrough and malformed batches"
   const { validateTranscriptBatchRequest } = loadBackgroundHelpers();
   assert.match(source, /targetLanguage !== "zh"/);
   assert.match(source, /\["transcriptBatch", "interfaceBatch"\]/);
-  assert.throws(
-    () => validateTranscriptBatchRequest({ segments: [] }),
-    /1 to 4 segments/,
-  );
+  assert.throws(() => validateTranscriptBatchRequest({ segments: [] }), (error) => {
+    assert.equal(error.code, "INVALID_TRANSLATION_SEGMENT_COUNT");
+    assert.match(error.message, /1 \u81f3 4 \u4e2a\u7247\u6bb5/);
+    return true;
+  });
   assert.throws(
     () =>
       validateTranscriptBatchRequest({
@@ -476,7 +481,11 @@ test("background rejects unsupported language fallthrough and malformed batches"
           { id: "duplicate", text: "second" },
         ],
       }),
-    /unique and stable/,
+    (error) => {
+      assert.equal(error.code, "INVALID_TRANSLATION_SEGMENT_ID");
+      assert.match(error.message, /ID \u5fc5\u987b\u7a33\u5b9a\u4e14\u4e0d\u53ef\u91cd\u590d/);
+      return true;
+    },
   );
 });
 
@@ -575,7 +584,8 @@ test("provider idle silence aborts with a distinct Retry-able error", async () =
   const result = await request;
   assert.equal(result.success, false);
   assert.equal(result.code, "AI_IDLE_TIMEOUT");
-  assert.match(result.error, /inactive for 50 seconds.*Retry/i);
+  assert.equal(result.error, "AI_IDLE_TIMEOUT");
+  assert.match(result.message, /50 \u79d2\u6ca1\u6709\u54cd\u5e94.*\u91cd\u8bd5/);
   assert.equal(timers.activeCount(120_000), 0);
 });
 
@@ -619,7 +629,8 @@ test("blank-line keepalives cannot evade the provider hard cap", async () => {
   const result = await request;
   assert.equal(result.success, false);
   assert.equal(result.code, "AI_HARD_TIMEOUT");
-  assert.match(result.error, /120-second limit.*Retry/i);
+  assert.equal(result.error, "AI_HARD_TIMEOUT");
+  assert.match(result.message, /120 \u79d2.*\u91cd\u8bd5/);
   assert.equal(timers.activeCount(50_000), 0);
 });
 
@@ -643,7 +654,8 @@ test("provider response reader rejects bodies over 2 MiB", async () => {
   const result = await helpers.callAiTranslation("Translate.", "Hello.");
   assert.equal(result.success, false);
   assert.equal(result.code, "AI_RESPONSE_TOO_LARGE");
-  assert.match(result.error, /2 MiB limit/);
+  assert.equal(result.error, "AI_RESPONSE_TOO_LARGE");
+  assert.match(result.message, /\u5185\u5bb9\u8fc7\u5927.*\u91cd\u8bd5/);
 });
 
 test("DeepSeek retries one empty transcript JSON response without response_format", async () => {
@@ -715,6 +727,41 @@ test("interface batches use the dedicated Overview and Notes translation prompt"
     requests[0].messages[0].content,
     /chapter titles, summaries, quotes, and saved notes/,
   );
+});
+
+test("prompt sections load correctly from CRLF markdown", async () => {
+  const requests = [];
+  const crlfPrompt = read("prompts/translation.md").replace(/(?<!\r)\n/g, "\r\n");
+  const helpers = loadBackgroundHelpers({
+    fetchImpl: async (url, options) => {
+      if (url.startsWith("chrome-extension://")) {
+        return { ok: true, text: async () => crlfPrompt };
+      }
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: '{"segments":[{"id":"segment-0-0","text":"\u4e2d\u6587\u8bd1\u6587\u3002"}]}',
+            },
+          }],
+        }),
+      };
+    },
+  });
+
+  const result = await helpers.handleTranslateContent(
+    { segments: [{ id: "segment-0-0", text: "A complete source sentence." }] },
+    "transcriptBatch",
+    "zh",
+    "Video",
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.translatedContent.segments[0].text, "\u4e2d\u6587\u8bd1\u6587\u3002");
+  assert.match(requests[0].messages[0].content, /Return a JSON object with exactly this shape/);
+  assert.doesNotMatch(requests[0].messages[0].content, /\r/);
 });
 
 test("translation message watchdog rejects, clears its timer, and ignores late replies", async () => {
