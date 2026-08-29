@@ -28,6 +28,7 @@ public_allowlist=(
   "manifest.json"
   "background.js"
   "settings.js"
+  "ai-providers.js"
   "content.js"
   "sidepanel.html"
   "sidepanel.css"

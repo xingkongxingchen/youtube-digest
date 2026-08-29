@@ -4,7 +4,7 @@
  * This is the "brain" of the extension. It runs in the background and handles:
  * 1. Opening the side panel when the user clicks the extension icon
  * 2. Fetching YouTube transcripts via Supadata API
- * 3. Calling DeepSeek to analyze the transcript
+ * 3. Calling the active AI Provider to analyze the transcript
  * 4. Sending results back to the side panel
  *
  * Think of it like a backend server — it does the heavy lifting
@@ -14,6 +14,7 @@
 // Import safe defaults and validation helpers. Secret keys live in
 // chrome.storage.local and are never part of the extension source.
 importScripts("settings.js");
+importScripts("ai-providers.js");
 
 const DEBUG = false;
 const AI_PROVIDER_IDLE_TIMEOUT_MS = 50_000;
@@ -34,6 +35,10 @@ chrome.storage.local
 async function getSettings() {
   const stored = await chrome.storage.local.get(YTD_SETTINGS.STORAGE_KEY);
   return YTD_SETTINGS.normalize(stored[YTD_SETTINGS.STORAGE_KEY]);
+}
+
+function getActiveProvider(settings) {
+  return YTD_SETTINGS.getActiveProvider(settings);
 }
 
 const SAFE_PRODUCT_ERROR_CODES = new Set([
@@ -61,6 +66,8 @@ const SAFE_PRODUCT_ERROR_CODES = new Set([
   "VIDEO_INFO_FAILED",
   "TRANSLATION_FAILED",
   "CONFIG_READ_FAILED",
+  "INVALID_PROVIDER",
+  "PROVIDER_TEST_FAILED",
   "UNSUPPORTED_TRANSLATION_TARGET",
   "UNSUPPORTED_TRANSLATION_CONTENT_TYPE",
   "INVALID_TRANSLATION_SEGMENT_COUNT",
@@ -82,11 +89,11 @@ function getSafeProductErrorCode(error, fallbackCode) {
 
 function getSafeUserErrorMessage(error, fallbackMessage = "操作失败，请稍后重试。") {
   const messagesByCode = {
-    NO_AI_KEY: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
-    EMPTY_AI_RESPONSE: "DeepSeek 返回了空内容，请重试。",
-    AI_IDLE_TIMEOUT: "DeepSeek 请求已连续 50 秒没有响应，请重试。",
-    AI_HARD_TIMEOUT: "DeepSeek 请求超过 120 秒，请重试。",
-    AI_RESPONSE_TOO_LARGE: "DeepSeek 返回的内容过大，请缩短内容后重试。",
+    NO_AI_KEY: "当前 Provider 尚未配置 API Key，请打开 YouTube Digest Settings。",
+    EMPTY_AI_RESPONSE: "当前 Provider 返回了空内容，请重试。",
+    AI_IDLE_TIMEOUT: "当前 Provider 请求已连续 50 秒没有响应，请重试。",
+    AI_HARD_TIMEOUT: "当前 Provider 请求超过 120 秒，请重试。",
+    AI_RESPONSE_TOO_LARGE: "当前 Provider 返回的内容过大，请缩短内容后重试。",
     RATE_LIMITED: "请求过于频繁，请稍后重试。",
     SUPADATA_REQUEST_FAILED: "Supadata API 请求失败，请稍后重试。",
     TRANSCRIPT_JOB_POLL_FAILED: "字幕任务查询失败，请稍后重试。",
@@ -99,10 +106,10 @@ function getSafeUserErrorMessage(error, fallbackMessage = "操作失败，请稍
   };
 
   if (error?.status === 401) {
-    return "DeepSeek 拒绝了 API 密钥，请在 YouTube Digest Settings 中检查配置。";
+    return `${error.providerName || "当前 Provider"} 拒绝了 API Key，请在 YouTube Digest Settings 中检查配置。`;
   }
   if (error?.status === 429) {
-    return "DeepSeek 请求过于频繁，请稍后重试。";
+    return `${error.providerName || "当前 Provider"} 请求过于频繁，请稍后重试。`;
   }
   if (SAFE_PRODUCT_ERROR_CODES.has(error?.code) && messagesByCode[error.code]) {
     return messagesByCode[error.code];
@@ -165,26 +172,26 @@ async function requestAiCompletion({
   maxTokens,
   temperature,
   responseFormat,
+  providerOverride,
 }) {
   const settings = await getSettings();
-  if (!settings.aiApiKey) {
+  const provider = providerOverride
+    ? YTD_SETTINGS.normalizeProvider(providerOverride)
+    : getActiveProvider(settings);
+  if (!provider.apiKey) {
     const error = new Error(
-      "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
+      `${provider.name} 尚未配置 API Key，请打开 YouTube Digest Settings。`,
     );
     error.code = "NO_AI_KEY";
+    error.providerName = provider.name;
     throw error;
   }
-  const body = {
-    model: settings.aiModel,
-    max_tokens: maxTokens,
+  const request = YTD_AI_PROVIDERS.buildProviderRequest(provider, {
     messages,
-  };
-  if (typeof temperature === "number") body.temperature = temperature;
-  if (responseFormat) {
-    body.response_format = responseFormat;
-  }
-  // Product features need bounded, predictable latency rather than reasoning traces.
-  body.thinking = { type: "disabled" };
+    maxTokens,
+    temperature,
+    responseFormat,
+  });
 
   const controller = new AbortController();
   let timeoutKind = "";
@@ -209,50 +216,40 @@ async function requestAiCompletion({
   );
   resetIdleTimeout();
   try {
-    const response = await fetch(
-      YTD_SETTINGS.chatCompletionsUrl(),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${settings.aiApiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      },
-    );
-    // Receiving headers proves DeepSeek is still making progress. DeepSeek
-    // may then send blank-line body chunks while a non-streaming request queues.
+    const response = await fetch(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: JSON.stringify(request.body),
+      signal: controller.signal,
+    });
+    // Receiving headers proves the Provider is still making progress. Some
+    // services send blank-line chunks while a non-streaming request queues.
     resetIdleTimeout();
 
     const data = await readBoundedAiResponse(response, resetIdleTimeout);
     if (!response.ok) {
-      const error = new Error(`DeepSeek 请求失败（状态码 ${response.status}）。`);
+      const error = new Error(`${provider.name} 请求失败（状态码 ${response.status}）。`);
       error.status = response.status;
+      error.providerName = provider.name;
       throw error;
     }
-
-    const text = data.choices?.[0]?.message?.content;
-    if (typeof text !== "string" || !text.trim()) {
-      const error = new Error("DeepSeek 返回了空内容，请重试。");
-      error.code = "EMPTY_AI_RESPONSE";
-      throw error;
-    }
-
-    return { text, settings };
+    const text = YTD_AI_PROVIDERS.parseProviderResponse(provider, data);
+    return { text, settings, provider };
   } catch (error) {
     if (timeoutKind === "idle") {
       const timeoutError = new Error(
-        "DeepSeek 请求已连续 50 秒没有响应，请重试。",
+        `${provider.name} 请求已连续 50 秒没有响应，请重试。`,
       );
       timeoutError.code = "AI_IDLE_TIMEOUT";
+      timeoutError.providerName = provider.name;
       throw timeoutError;
     }
     if (timeoutKind === "hard") {
       const timeoutError = new Error(
-        "DeepSeek 请求超过 120 秒，请重试。",
+        `${provider.name} 请求超过 120 秒，请重试。`,
       );
       timeoutError.code = "AI_HARD_TIMEOUT";
+      timeoutError.providerName = provider.name;
       throw timeoutError;
     }
     throw error;
@@ -271,13 +268,13 @@ async function readBoundedAiResponse(response, onActivity) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      // Every received chunk is activity, including DeepSeek's blank lines.
+      // Every received chunk is activity, including Provider keepalive lines.
       onActivity();
       const byteLength = value?.byteLength ?? 0;
       responseBytes += byteLength;
       if (responseBytes > AI_PROVIDER_MAX_RESPONSE_BYTES) {
         await reader.cancel?.().catch(() => {});
-        const error = new Error("DeepSeek 返回的内容超过 2 MiB 限制。");
+        const error = new Error("人工智能服务返回的内容超过 2 MiB 限制。");
         error.code = "AI_RESPONSE_TOO_LARGE";
         throw error;
       }
@@ -294,7 +291,7 @@ async function readBoundedAiResponse(response, onActivity) {
     onActivity();
     const byteLength = new TextEncoder().encode(responseText).byteLength;
     if (byteLength > AI_PROVIDER_MAX_RESPONSE_BYTES) {
-      const error = new Error("DeepSeek 返回的内容超过 2 MiB 限制。");
+      const error = new Error("人工智能服务返回的内容超过 2 MiB 限制。");
       error.code = "AI_RESPONSE_TOO_LARGE";
       throw error;
     }
@@ -426,12 +423,55 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
 // MESSAGE HANDLING
 // ============================================================
 
+async function handleTestProviderConnection(providerInput) {
+  const validation = YTD_SETTINGS.validateProvider(providerInput);
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: "INVALID_PROVIDER",
+      message: validation.errors[0],
+    };
+  }
+  const provider = validation.provider;
+  try {
+    await requestAiCompletion({
+      providerOverride: provider,
+      maxTokens: 12,
+      temperature: 0,
+      messages: [{ role: "user", content: "仅回复 OK" }],
+    });
+    return { success: true, providerName: provider.name };
+  } catch (error) {
+    error.providerName ||= provider.name;
+    return createSafeFailure(
+      error,
+      "PROVIDER_TEST_FAILED",
+      `${provider.name} 连接测试失败，请检查 API 地址、API Key 和模型。`,
+    );
+  }
+}
+
 /**
  * Listen for messages from the side panel and content script.
  * This is like a switchboard — different "actions" trigger different handlers.
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // We need to return true to indicate we'll respond asynchronously
+  if (message.action === "TEST_PROVIDER_CONNECTION") {
+    handleTestProviderConnection(message.provider)
+      .then(sendResponse)
+      .catch((error) =>
+        sendResponse(
+          createSafeFailure(
+            error,
+            "PROVIDER_TEST_FAILED",
+            "Provider 连接测试失败，请检查配置。",
+          ),
+        ),
+      );
+    return true;
+  }
+
   if (message.action === "fetchTranscript") {
     handleFetchTranscript(message.videoId)
       .then(sendResponse)
@@ -466,7 +506,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "explainSelection") {
-    // Explain selected text using DeepSeek.
+    // Explain selected text using the active AI Provider.
     handleExplainSelection(
       message.selectedText,
       message.transcriptContext,
@@ -535,7 +575,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Translation: send content to DeepSeek.
+  // Translation: send content to the active AI Provider.
   if (message.action === "translateContent") {
     handleTranslateContent(
       message.content,
@@ -554,12 +594,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === "checkConfig") {
     getSettings()
-      .then((settings) =>
-        sendResponse({
+      .then((settings) => {
+        const provider = getActiveProvider(settings);
+        return sendResponse({
           hasSupadataKey: !!settings.supadataApiKey,
-          hasAiKey: !!settings.aiApiKey,
-        }),
-      )
+          hasAiKey: !!provider.apiKey,
+          providerName: provider.name,
+        });
+      })
       .catch((error) =>
         sendResponse(
           createSafeFailure(error, "CONFIG_READ_FAILED", "读取配置失败，请稍后重试。"),
@@ -875,7 +917,7 @@ async function handleFetchTranscript(videoId) {
           // Plain text without timestamps (for display/export)
           transcriptTextPlain += cleanText + " ";
 
-          // Timestamped text for DeepSeek (format: [MM:SS] text)
+          // Timestamped text for the AI Provider (format: [MM:SS] text)
           // This allows the model to reference actual transcript positions.
           transcriptTextTimestamped += `[${timestamp}] ${cleanText}\n`;
         }
@@ -1028,11 +1070,11 @@ function parseLooseJson(text) {
 }
 
 // ============================================================
-// DEEPSEEK ANALYSIS
+// AI PROVIDER ANALYSIS
 // ============================================================
 
 /**
- * Sends the transcript to DeepSeek for analysis.
+ * Sends the transcript to the active AI Provider for analysis.
  *
  * The prompt asks the model to produce chapters covering the whole video
  * and 3-5 key quotes with timestamps.
@@ -1051,11 +1093,12 @@ async function handleAnalyzeTranscript(
 ) {
   try {
     const settings = await getSettings();
-    if (!settings.aiApiKey) {
+    const provider = getActiveProvider(settings);
+    if (!provider.apiKey) {
       return {
         success: false,
         error: "NO_AI_KEY",
-        message: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
+        message: `${provider.name} 尚未配置 API Key，请打开 YouTube Digest Settings。`,
       };
     }
 
@@ -1109,7 +1152,7 @@ async function handleAnalyzeTranscript(
       promptVariables,
     );
 
-    debugLog("[YouTube Digest] Requesting video analysis", settings.aiModel);
+    debugLog("[YouTube Digest] Requesting video analysis", provider.name, provider.model);
     const { text: responseText } = await requestAiCompletion({
       maxTokens: 8192,
       responseFormat: { type: "json_object" },
@@ -1136,14 +1179,14 @@ async function handleAnalyzeTranscript(
       return {
         success: false,
         error: "INVALID_AI_KEY",
-        message: "DeepSeek 拒绝了 API 密钥，请在 YouTube Digest Settings 中检查配置。",
+        message: `${error.providerName || "当前 Provider"} 拒绝了 API Key，请在 YouTube Digest Settings 中检查配置。`,
       };
     }
     if (error.status === 429) {
       return {
         success: false,
         error: "RATE_LIMITED",
-        message: "DeepSeek 请求过于频繁，请稍后重试。",
+        message: `${error.providerName || "当前 Provider"} 请求过于频繁，请稍后重试。`,
       };
     }
     return createSafeFailure(
@@ -1158,7 +1201,7 @@ async function handleAnalyzeTranscript(
  * Validates all timestamps in the analysis and fixes any that exceed video duration.
  * This is a safety net to prevent hallucinated timestamps from reaching the UI.
  *
- * @param {Object} analysis - The parsed analysis from DeepSeek
+ * @param {Object} analysis - The parsed analysis from the active Provider
  * @param {number} maxSeconds - Maximum valid timestamp in seconds
  * @returns {Object} - Analysis with validated timestamps
  */
@@ -1252,7 +1295,7 @@ async function handleGetVideoInfo(tabId) {
 // ============================================================
 
 /**
- * Explains selected text using DeepSeek.
+ * Explains selected text using the active AI Provider.
  * Provides context, definitions, and clarification for complex terms.
  *
  * @param {string} selectedText - The text the user selected
@@ -1404,7 +1447,7 @@ async function handleSaveNote(
       }
     }
 
-    // Clean up the text with DeepSeek.
+    // Clean up the text with the active AI Provider.
     const cleanedText = await cleanupNoteText(
       matchedLine.text,
       beforeLine,
@@ -1457,7 +1500,7 @@ async function handleSaveNote(
 }
 
 /**
- * Cleans up transcript lines using DeepSeek.
+ * Cleans up transcript lines using the active AI Provider.
  * Takes the target line plus buffer sentences (1 before, 1 after).
  * Uses JSON output to prevent any preambles from appearing.
  */
@@ -1469,7 +1512,7 @@ async function cleanupNoteText(
   videoTitle,
 ) {
   const settings = await getSettings();
-  if (!settings.aiApiKey) {
+  if (!getActiveProvider(settings).apiKey) {
     return [beforeText, targetText, afterText].filter(Boolean).join(" ");
   }
 
@@ -1600,11 +1643,12 @@ async function handleExplainSelection(
 ) {
   try {
     const settings = await getSettings();
-    if (!settings.aiApiKey) {
+    const provider = getActiveProvider(settings);
+    if (!provider.apiKey) {
       return {
         success: false,
         error: "NO_AI_KEY",
-        message: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
+        message: `${provider.name} 尚未配置 API Key，请打开 YouTube Digest Settings。`,
       };
     }
 
@@ -1753,7 +1797,7 @@ function normalizeTranslatedSegmentBatch(parsed, sourceSegments) {
 }
 
 /**
- * Translates content using DeepSeek.
+ * Translates content using the active AI Provider.
  * @param {Object} content - JSON object containing semantic transcript segments
  * @param {string} contentType - 'transcriptBatch' or 'interfaceBatch'
  * @param {string} targetLanguage - 'zh' for Simplified Chinese
@@ -1783,11 +1827,12 @@ async function handleTranslateContent(
     }
 
     const settings = await getSettings();
-    if (!settings.aiApiKey) {
+    const provider = getActiveProvider(settings);
+    if (!provider.apiKey) {
       return {
         success: false,
         error: "NO_AI_KEY",
-        message: "尚未配置 DeepSeek API 密钥，请打开 YouTube Digest Settings。",
+        message: `${provider.name} 尚未配置 API Key，请打开 YouTube Digest Settings。`,
       };
     }
 
@@ -1819,7 +1864,7 @@ async function handleTranslateContent(
       translationOptions,
     );
 
-    // DeepSeek JSON mode can rarely return an empty content string. The prompt
+    // Some JSON modes can return an empty content string. The prompt
     // already requires JSON, so retry once without response_format.
     if (!result.success && result.code === "EMPTY_AI_RESPONSE") {
       result = await callAiTranslation(systemPrompt, userContent, {
@@ -1850,7 +1895,7 @@ async function handleTranslateContent(
 }
 
 /**
- * Makes a single DeepSeek call for translation.
+ * Makes a single active-Provider call for translation.
  * Uses temperature 0.3 for consistent, predictable translations.
  *
  * @param {string} systemPrompt - The system-level instructions

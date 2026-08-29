@@ -127,15 +127,10 @@ function loadBackgroundHelpers({
       },
       tabs: { onUpdated: listeners, onActivated: listeners },
     },
-    YTD_SETTINGS: {
-      STORAGE_KEY: "ytd_settings",
-      normalize: (value) => value,
-      chatCompletionsUrl: (baseUrl) => `${baseUrl}/chat/completions`,
-      canonicalYouTubeUrl: (videoId) =>
-        `https://www.youtube.com/watch?v=${videoId}`,
-    },
   };
   sandbox.globalThis = sandbox;
+  vm.runInNewContext(read("settings.js"), sandbox);
+  vm.runInNewContext(read("ai-providers.js"), sandbox);
   vm.runInNewContext(read("background.js"), sandbox);
   return sandbox.__YTD_TRANSLATION_TESTING__;
 }
@@ -498,7 +493,7 @@ test("background rejects unsupported language fallthrough and malformed batches"
   );
 });
 
-test("all AI product requests use DeepSeek non-thinking and JSON behavior", async () => {
+test("the migrated DeepSeek profile keeps non-thinking and JSON behavior", async () => {
   const deepSeekRequests = [];
   const successfulFetch = (requests) => async (_url, options) => {
     requests.push(JSON.parse(options.body));
@@ -527,7 +522,7 @@ test("all AI product requests use DeepSeek non-thinking and JSON behavior", asyn
   const backgroundSource = read("background.js");
   assert.equal(
     (backgroundSource.match(/await requestAiCompletion\(\{/g) || []).length,
-    4,
+    5,
   );
   assert.doesNotMatch(backgroundSource, /disableThinking/);
   for (const callPath of [
