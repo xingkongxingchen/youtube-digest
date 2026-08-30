@@ -16,7 +16,7 @@ var YTD_SETTINGS = (() => {
     Object.freeze({ type: "anthropic", name: "Anthropic Claude", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-6" }),
     Object.freeze({ type: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-3.5-flash" }),
     Object.freeze({ type: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-5-mini" }),
-    Object.freeze({ type: "minimax", name: "MiniMax", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M2.7" }),
+    Object.freeze({ type: "minimax", name: "MiniMax", baseUrl: "https://api.minimaxi.com/anthropic", model: "MiniMax-M2.7" }),
     Object.freeze({ type: "mimo", name: "小米 MiMo", baseUrl: "https://api.xiaomimimo.com/v1", model: "mimo-v2.5-pro" }),
   ]);
   const CUSTOM_OPENAI_PRESET = Object.freeze({
@@ -147,7 +147,7 @@ var YTD_SETTINGS = (() => {
   function endpointUrl(providerInput) {
     const provider = normalizeProvider(providerInput);
     if (!provider.baseUrl) throw new Error("Provider API 地址无效。");
-    if (provider.type === "anthropic") {
+    if (provider.type === "anthropic" || provider.type === "minimax") {
       return provider.baseUrl.endsWith("/v1/messages") ? provider.baseUrl : `${provider.baseUrl}/v1/messages`;
     }
     if (provider.type === "gemini") {

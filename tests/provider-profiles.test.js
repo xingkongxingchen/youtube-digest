@@ -262,6 +262,10 @@ test("origin and endpoint helpers emit only the minimum provider origin", () => 
 
   assert.match(settings.endpointUrl(providerFromPreset("openai")), /\/chat\/completions$/);
   assert.match(settings.endpointUrl(providerFromPreset("anthropic")), /\/v1\/messages$/);
+  assert.equal(
+    settings.endpointUrl(providerFromPreset("minimax")),
+    "https://api.minimaxi.com/anthropic/v1/messages",
+  );
   assert.match(
     settings.endpointUrl(providerFromPreset("gemini")),
     /\/v1beta\/models\/[^/]+:generateContent$/,
@@ -350,15 +354,25 @@ test("DeepSeek, MiniMax, and MiMo keep provider-specific request rules isolated"
   const miniMax = providerFromPreset("minimax");
   const mimo = providerFromPreset("mimo");
   const deepSeekBody = requestBody(buildProviderRequest(deepSeek, SAMPLE_REQUEST));
-  const miniMaxBody = requestBody(buildProviderRequest(miniMax, SAMPLE_REQUEST));
+  const miniMaxRequest = buildProviderRequest(miniMax, SAMPLE_REQUEST);
+  const miniMaxBody = requestBody(miniMaxRequest);
   const mimoBody = requestBody(buildProviderRequest(mimo, SAMPLE_REQUEST));
 
   assert.equal(deepSeekBody.max_tokens, 512);
   assert.deepEqual(deepSeekBody.thinking, { type: "disabled" });
   assert.equal(Object.hasOwn(deepSeekBody, "max_completion_tokens"), false);
 
+  assert.equal(miniMaxRequest.url, "https://api.minimaxi.com/anthropic/v1/messages");
+  assert.equal(header(miniMaxRequest, "authorization"), "Bearer test-key");
+  assert.equal(header(miniMaxRequest, "x-api-key"), undefined);
+  assert.equal(miniMaxBody.system, SAMPLE_REQUEST.messages[0].content);
+  assert.deepEqual(miniMaxBody.messages, SAMPLE_REQUEST.messages.slice(1));
+  assert.equal(miniMaxBody.max_tokens, 512);
+  assert.equal(miniMaxBody.temperature, 0.2);
   assert.equal(Object.hasOwn(miniMaxBody, "thinking"), false);
   assert.equal(Object.hasOwn(miniMaxBody, "reasoning_split"), false);
+  assert.equal(Object.hasOwn(miniMaxBody, "max_completion_tokens"), false);
+  assert.equal(Object.hasOwn(miniMaxBody, "response_format"), false);
   assert.equal(miniMaxBody.model, miniMax.model);
 
   assert.equal(mimoBody.max_completion_tokens, 512);
@@ -368,11 +382,54 @@ test("DeepSeek, MiniMax, and MiMo keep provider-specific request rules isolated"
   assert.notEqual(miniMax.baseUrl, mimo.baseUrl);
 
   assert.equal(
+    parseProviderResponse(miniMax, {
+      content: [
+        { type: "thinking", thinking: "hidden" },
+        { type: "text", text: "MiniMax " },
+        { type: "text", text: "response" },
+      ],
+    }),
+    "MiniMax response",
+  );
+
+  assert.equal(
     parseProviderResponse(mimo, {
       choices: [{ message: { reasoning_content: "hidden", content: "MiMo response" } }],
     }),
     "MiMo response",
   );
+});
+
+test("MiniMax builds valid connection-test, overview, and translation requests", () => {
+  const { buildProviderRequest } = requireAdapterContract();
+  const miniMax = providerFromPreset("minimax");
+  const requestFor = (overrides) => requestBody(buildProviderRequest(miniMax, {
+    ...SAMPLE_REQUEST,
+    ...overrides,
+  }));
+
+  const connectionTest = requestFor({ maxTokens: 12, temperature: 0, responseFormat: undefined });
+  assert.equal(connectionTest.max_tokens, 12);
+  assert.equal(Object.hasOwn(connectionTest, "temperature"), false);
+
+  const overview = requestFor({ maxTokens: 8192, temperature: 0.2, responseFormat: undefined });
+  assert.equal(overview.max_tokens, 8192);
+  assert.equal(overview.temperature, 0.2);
+
+  const translation = requestFor({
+    maxTokens: 8192,
+    temperature: 0.3,
+    responseFormat: { type: "json_object" },
+  });
+  assert.equal(translation.max_tokens, 8192);
+  assert.equal(translation.temperature, 0.3);
+  assert.equal(Object.hasOwn(translation, "response_format"), false);
+
+  for (const body of [connectionTest, overview, translation]) {
+    assert.equal(body.system, SAMPLE_REQUEST.messages[0].content);
+    assert.deepEqual(body.messages, SAMPLE_REQUEST.messages.slice(1));
+    assert.equal(Object.hasOwn(body, "max_completion_tokens"), false);
+  }
 });
 
 test("secrets never appear in validation errors, parser errors, presets, or logs", () => {

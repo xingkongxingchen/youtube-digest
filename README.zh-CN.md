@@ -22,7 +22,7 @@ YouTube Digest 是一个需要自行提供 API Key 的开源项目，通过 GitH
 - 在 **Settings** 中用多张 Provider 卡片管理不同人工智能服务，每张卡片独立保存名称、API Key、HTTPS 接口地址和模型。
 - 内置 DeepSeek、OpenAI、Anthropic Claude、Google Gemini、OpenRouter、MiniMax 和小米 MiMo，也可以添加自定义 OpenAI 兼容服务。
 - 使用前可以测试连接，随时切换当前 Provider；Chrome 只在需要时申请访问该服务的 API 域名。
-- 从 v1.3 升级时自动迁移已有 DeepSeek 配置，不会显示、复制或上传已经保存的 Key。
+- 从 v1.3 升级时，会在 Chrome 本地存储中自动迁移已有 DeepSeek 配置；保存的 Key 不会写入源代码、提交记录、日志或分析服务。
 
 同时包含 v1.3.0 的功能：
 
@@ -92,7 +92,7 @@ YouTube Digest 需要你在自己的服务账号中准备两类 Key：
 
 在侧边栏中打开 **Settings**。你也可以在 `chrome://extensions` 的 YouTube Digest 卡片中打开扩展选项。Key 只能粘贴到这些设置输入框中。不要把 Key 发送到 AI 对话、项目文件、截图或公开消息中。
 
-不同 Provider 卡片分别保存自己的 Key、接口和模型。DeepSeek 与小米 MiMo 使用各自隔离的非思考请求规则；Claude 和 Gemini 使用原生协议适配器；OpenAI、OpenRouter、MiniMax 和自定义 OpenAI 兼容服务使用兼容的对话适配器。不同服务的专属规则不会相互影响。
+不同 Provider 卡片分别保存自己的 Key、接口和模型。DeepSeek 与小米 MiMo 使用各自隔离的非思考请求规则；Claude 和 Gemini 使用原生协议适配器；MiniMax 使用官方推荐的 Anthropic-compatible 协议；OpenAI、OpenRouter 和自定义 OpenAI 兼容服务使用兼容的对话适配器。不同服务的专属规则不会相互影响。
 
 API Key 和设置保存在你设备上的 Chrome 扩展本地存储中。发布包不会包含或使用 `config.js`。
 

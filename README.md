@@ -20,7 +20,7 @@ YouTube Digest is a bring-your-own-key project installed locally from GitHub. It
 - Manage multiple AI Provider cards in **Settings**, each with its own name, API key, HTTPS endpoint, and model.
 - Add built-in profiles for DeepSeek, OpenAI, Anthropic Claude, Google Gemini, OpenRouter, MiniMax, and Xiaomi MiMo, or add a custom OpenAI-compatible service.
 - Test a Provider before using it, switch the active Provider at any time, and request access only to the selected API origin.
-- Upgrade existing v1.3 DeepSeek settings automatically without exposing or copying the saved key.
+- Upgrade existing v1.3 DeepSeek settings automatically inside local Chrome storage; the saved key is never written to source code, commits, logs, or analytics.
 
 Also included from v1.3.0:
 
@@ -90,7 +90,7 @@ See the [official Supadata documentation](https://docs.supadata.ai/) if the dash
 
 Open **Settings** from the side panel. You can also open the YouTube Digest **Options** page from its card at `chrome://extensions` or by right-clicking its toolbar icon. Paste keys only into these Settings fields. Never paste a key into an AI chat, repository file, screenshot, or public message.
 
-Provider cards store separate credentials, endpoints, and models. DeepSeek and Xiaomi MiMo use their own non-thinking request rules; Claude and Gemini use native protocol adapters; OpenAI, OpenRouter, MiniMax, and custom OpenAI-compatible services use the compatible chat adapter. Provider-specific rules remain isolated.
+Provider cards store separate credentials, endpoints, and models. DeepSeek and Xiaomi MiMo use their own non-thinking request rules; Claude and Gemini use native protocol adapters; MiniMax uses its officially recommended Anthropic-compatible protocol; OpenAI, OpenRouter, and custom OpenAI-compatible services use the compatible chat adapter. Provider-specific rules remain isolated.
 
 Keys and settings are stored in Chrome's local extension storage on your device. Release builds do not include or use `config.js`.
 

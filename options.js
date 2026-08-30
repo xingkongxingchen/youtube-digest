@@ -38,7 +38,7 @@ const YTD_OPTIONS = (() => {
     minimax: Object.freeze({
       type: "minimax",
       name: "MiniMax",
-      baseUrl: "https://api.minimaxi.com/v1",
+      baseUrl: "https://api.minimaxi.com/anthropic",
       model: "MiniMax-M2.7",
     }),
     mimo: Object.freeze({
@@ -61,7 +61,7 @@ const YTD_OPTIONS = (() => {
       languageGroupLabel: "Interface language",
       heading: "Bring your own API keys",
       lede:
-        "Keys stay in this Chrome profile and are sent only to Supadata and the Provider you enable. This open-source extension has no developer server or analytics.",
+        "Keys stay in this Chrome profile and are used only for Supadata, the Provider you enable, and a Provider you explicitly test. This open-source extension has no developer server or analytics.",
       transcriptProvider: "Transcript provider",
       supadataApiKeyLabel: "Supadata API key",
       supadataHelp: "Used to fetch timestamped YouTube subtitles. ",
@@ -107,7 +107,7 @@ const YTD_OPTIONS = (() => {
       footer:
         'Read <a href="PRIVACY.md" target="_blank">PRIVACY.md</a> in the repository for the complete data-flow description.',
       migrationWarning:
-        "Custom provider settings were removed safely. Your Supadata key was kept, but the AI key was cleared. Enter a DeepSeek API key to continue.",
+        "Settings were upgraded to Provider cards. Choose Save settings to approve access to the active Provider origin. An unidentifiable legacy custom key is not migrated.",
       saving: "Saving…",
       addSupadataKey: "Add a Supadata API key.",
       addDeepseekKey: "Add a DeepSeek API key.",
@@ -132,7 +132,7 @@ const YTD_OPTIONS = (() => {
       languageGroupLabel: "界面语言",
       heading: "使用你自己的 API 密钥",
       lede:
-        "密钥仅保存在当前 Chrome 个人资料中，只会发送给 Supadata 和你启用的 Provider。本开源扩展没有开发者服务器，也不使用分析服务。",
+        "密钥仅保存在当前 Chrome 个人资料中，只用于 Supadata、你启用的 Provider，以及你主动测试连接的 Provider。本开源扩展没有开发者服务器，也不使用分析服务。",
       transcriptProvider: "字幕服务",
       supadataApiKeyLabel: "Supadata API 密钥",
       supadataHelp: "用于获取带时间戳的 YouTube 字幕。",
@@ -176,7 +176,7 @@ const YTD_OPTIONS = (() => {
       footer:
         '完整数据流说明请参阅仓库中的 <a href="PRIVACY.md" target="_blank">PRIVACY.md</a>。',
       migrationWarning:
-        "已安全移除自定义服务设置。Supadata 密钥已保留，人工智能服务密钥已清除。请输入 DeepSeek API 密钥以继续使用。",
+        "设置已升级为 Provider 卡片。请点击“保存设置”，确认当前 Provider 的域名访问权限；无法识别来源的旧版自定义 Key 不会迁移。",
       saving: "正在保存…",
       addSupadataKey: "请添加 Supadata API 密钥。",
       addDeepseekKey: "请添加 DeepSeek API 密钥。",
@@ -830,6 +830,7 @@ const YTD_OPTIONS = (() => {
               providerSettings,
             ),
           });
+          setStatus(saveStatus, "migrationWarning");
         }
       } catch (_error) {
         setStatus(saveStatus, "settingsLoadFailed");

@@ -65,6 +65,24 @@ var YTD_AI_PROVIDERS = (() => {
     };
   }
 
+  function buildMiniMaxRequest(provider, options) {
+    const { system, conversation } = splitSystemMessages(options.messages);
+    const body = { model: provider.model, max_tokens: options.maxTokens, messages: conversation };
+    if (system) body.system = system;
+    if (typeof options.temperature === "number" && options.temperature > 0 && options.temperature <= 1) {
+      body.temperature = options.temperature;
+    }
+    return {
+      url: YTD_SETTINGS.endpointUrl(provider),
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${provider.apiKey}`,
+      },
+      body,
+    };
+  }
+
   function buildGeminiRequest(provider, options) {
     const { system, conversation } = splitSystemMessages(options.messages);
     const body = {
@@ -97,6 +115,7 @@ var YTD_AI_PROVIDERS = (() => {
       responseFormat: options.responseFormat,
     };
     if (provider.type === "anthropic") return buildAnthropicRequest(provider, normalizedOptions);
+    if (provider.type === "minimax") return buildMiniMaxRequest(provider, normalizedOptions);
     if (provider.type === "gemini") return buildGeminiRequest(provider, normalizedOptions);
     return buildOpenAiRequest(provider, normalizedOptions);
   }
@@ -104,7 +123,7 @@ var YTD_AI_PROVIDERS = (() => {
   function parseProviderResponse(providerInput, data) {
     const provider = YTD_SETTINGS.normalizeProvider(providerInput);
     let text = "";
-    if (provider.type === "anthropic") {
+    if (provider.type === "anthropic" || provider.type === "minimax") {
       text = Array.isArray(data?.content)
         ? data.content.filter((block) => block?.type === "text").map((block) => block.text || "").join("")
         : "";
