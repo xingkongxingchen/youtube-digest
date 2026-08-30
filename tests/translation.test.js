@@ -538,6 +538,39 @@ test("the migrated DeepSeek profile keeps non-thinking and JSON behavior", async
   }
 });
 
+test("MiniMax connection test survives a thinking-only max-token response", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          content: [{ type: "thinking", thinking: "checking credentials" }],
+          stop_reason: "max_tokens",
+        }),
+      };
+    },
+  });
+  const provider = {
+    id: "minimax-test",
+    type: "minimax",
+    name: "MiniMax",
+    baseUrl: "https://api.minimaxi.com/anthropic",
+    model: "MiniMax-M2.7",
+    apiKey: "test-key",
+  };
+
+  const result = await helpers.handleTestProviderConnection(provider);
+
+  assert.equal(result.success, true);
+  assert.equal(result.providerName, "MiniMax");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].max_tokens, 256);
+  assert.equal(Object.hasOwn(requests[0], "temperature"), false);
+});
+
 test("blank-line chunks reset provider idle timeout and valid JSON succeeds", async () => {
   const timers = createFakeTimers();
   const helpers = loadBackgroundHelpers({

@@ -408,8 +408,8 @@ test("MiniMax builds valid connection-test, overview, and translation requests",
     ...overrides,
   }));
 
-  const connectionTest = requestFor({ maxTokens: 12, temperature: 0, responseFormat: undefined });
-  assert.equal(connectionTest.max_tokens, 12);
+  const connectionTest = requestFor({ maxTokens: 256, temperature: 0, responseFormat: undefined });
+  assert.equal(connectionTest.max_tokens, 256);
   assert.equal(Object.hasOwn(connectionTest, "temperature"), false);
 
   const overview = requestFor({ maxTokens: 8192, temperature: 0.2, responseFormat: undefined });
@@ -417,11 +417,11 @@ test("MiniMax builds valid connection-test, overview, and translation requests",
   assert.equal(overview.temperature, 0.2);
 
   const translation = requestFor({
-    maxTokens: 8192,
+    maxTokens: 1536,
     temperature: 0.3,
     responseFormat: { type: "json_object" },
   });
-  assert.equal(translation.max_tokens, 8192);
+  assert.equal(translation.max_tokens, 1536);
   assert.equal(translation.temperature, 0.3);
   assert.equal(Object.hasOwn(translation, "response_format"), false);
 

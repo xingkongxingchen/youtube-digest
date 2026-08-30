@@ -173,6 +173,7 @@ async function requestAiCompletion({
   temperature,
   responseFormat,
   providerOverride,
+  acceptTruncatedThinkingOnly = false,
 }) {
   const settings = await getSettings();
   const provider = providerOverride
@@ -233,7 +234,20 @@ async function requestAiCompletion({
       error.providerName = provider.name;
       throw error;
     }
-    const text = YTD_AI_PROVIDERS.parseProviderResponse(provider, data);
+    let text;
+    try {
+      text = YTD_AI_PROVIDERS.parseProviderResponse(provider, data);
+    } catch (error) {
+      const isMiniMaxConnectionTruncation =
+        acceptTruncatedThinkingOnly &&
+        provider.type === "minimax" &&
+        error?.code === "EMPTY_AI_RESPONSE" &&
+        data?.stop_reason === "max_tokens" &&
+        Array.isArray(data?.content) &&
+        data.content.some((block) => block?.type === "thinking");
+      if (!isMiniMaxConnectionTruncation) throw error;
+      text = "";
+    }
     return { text, settings, provider };
   } catch (error) {
     if (timeoutKind === "idle") {
@@ -436,8 +450,9 @@ async function handleTestProviderConnection(providerInput) {
   try {
     await requestAiCompletion({
       providerOverride: provider,
-      maxTokens: 12,
+      maxTokens: provider.type === "minimax" ? 256 : 12,
       temperature: 0,
+      acceptTruncatedThinkingOnly: provider.type === "minimax",
       messages: [{ role: "user", content: "仅回复 OK" }],
     });
     return { success: true, providerName: provider.name };
@@ -1932,6 +1947,7 @@ async function callAiTranslation(
 // Pure validators are exposed for the repository's Node tests only.
 globalThis.__YTD_TRANSLATION_TESTING__ = {
   requestAiCompletion,
+  handleTestProviderConnection,
   callAiTranslation,
   validateTranscriptBatchRequest,
   normalizeTranslatedSegmentBatch,
