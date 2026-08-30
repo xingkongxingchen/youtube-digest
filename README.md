@@ -15,7 +15,14 @@ YouTube Digest is a bring-your-own-key project installed locally from GitHub. It
 
 ![YouTube Digest demo](YouTube%20Digest%20demo.png)
 
-## New in v1.3.0
+## New in v1.4.0
+
+- Manage multiple AI Provider cards in **Settings**, each with its own name, API key, HTTPS endpoint, and model.
+- Add built-in profiles for DeepSeek, OpenAI, Anthropic Claude, Google Gemini, OpenRouter, MiniMax, and Xiaomi MiMo, or add a custom OpenAI-compatible service.
+- Test a Provider before using it, switch the active Provider at any time, and request access only to the selected API origin.
+- Upgrade existing v1.3 DeepSeek settings automatically without exposing or copying the saved key.
+
+Also included from v1.3.0:
 
 - Choose **Original**, **中文**, or **双语** independently in **Transcript**, **Overview**, and **Notes**, using the same familiar control on each page.
 - Remember each choice by video ID and page. A new video's three pages all start in **Original**, so translation never begins unexpectedly.
@@ -32,7 +39,7 @@ You do not need to understand the code or use the command line. Send this messag
 Your agent should:
 
 1. Ask where you want to keep the project, download or clone it there, and tell you the exact full path. If you want a suggestion, it can offer `~/Documents/youtube-digest` on macOS or Linux, or `%USERPROFILE%\Documents\youtube-digest` on Windows.
-2. Open the official Supadata and DeepSeek pages below and help you create your own accounts.
+2. Open the official Supadata page and the AI Provider page you choose, then help you create your own accounts.
 3. Walk you through selecting the exact project folder you chose in Chrome with **Load unpacked**.
 4. Show you where to enter your API keys in the extension's **Settings** page.
 5. Open a YouTube video with captions and confirm the transcript and translation work.
@@ -58,10 +65,10 @@ Because this is an unpacked extension, it does not update automatically. After d
 
 ## Set up your API keys
 
-YouTube Digest needs two keys under your own provider accounts:
+YouTube Digest needs two kinds of keys under your own service accounts:
 
 1. A **Supadata API key** to retrieve YouTube transcripts.
-2. A **DeepSeek API key** for overviews, explanations, translation, and automatic note polishing.
+2. An **AI Provider API key** for overviews, explanations, translation, and automatic note polishing.
 
 ### Get a Supadata API key
 
@@ -73,27 +80,17 @@ YouTube Digest needs two keys under your own provider accounts:
 
 See the [official Supadata documentation](https://docs.supadata.ai/) if the dashboard flow changes.
 
-### Get a DeepSeek API key
+### Add an AI Provider
 
-1. Open the official [DeepSeek API Keys page](https://platform.deepseek.com/api_keys).
-2. Sign in or create a DeepSeek Platform account when prompted.
-3. Choose **Create new API key**, give it a recognizable name such as `YouTube Digest`, and create it.
-4. Copy the key immediately. The full key may only be shown once.
-5. Paste it into **DeepSeek API key** in YouTube Digest Settings.
-6. If DeepSeek reports insufficient balance, add credit in your DeepSeek Platform account and try again.
-
-See the [official DeepSeek API documentation](https://api-docs.deepseek.com/) for current account and API details.
+1. Open **Settings**, choose **Add Provider**, and select DeepSeek, OpenAI, Anthropic Claude, Google Gemini, OpenRouter, MiniMax, Xiaomi MiMo, or a custom OpenAI-compatible service.
+2. Create an API key in that Provider's official dashboard. For DeepSeek, use the official [API Keys page](https://platform.deepseek.com/api_keys).
+3. Enter the key yourself in the new Provider card. Check the editable HTTPS API address and model against the Provider's current documentation.
+4. Choose **Test connection**. Chrome asks for access only to that Provider's API origin.
+5. Choose **Enable**, then save the settings. You can keep other cards and switch later.
 
 Open **Settings** from the side panel. You can also open the YouTube Digest **Options** page from its card at `chrome://extensions` or by right-clicking its toolbar icon. Paste keys only into these Settings fields. Never paste a key into an AI chat, repository file, screenshot, or public message.
 
-The published version supports DeepSeek V4 Flash as its only AI provider:
-
-```text
-Base URL: https://api.deepseek.com
-Model: deepseek-v4-flash
-```
-
-YouTube Digest sends every DeepSeek request in non-thinking mode for responsive, predictable interactions. The endpoint and model are fixed in Settings, so the only AI credential you enter is your DeepSeek API key. To use another provider or model, copy the safe customization prompt in Settings and give it to a coding agent for your local copy. Never add an API key to that prompt or chat.
+Provider cards store separate credentials, endpoints, and models. DeepSeek and Xiaomi MiMo use their own non-thinking request rules; Claude and Gemini use native protocol adapters; OpenAI, OpenRouter, MiniMax, and custom OpenAI-compatible services use the compatible chat adapter. Provider-specific rules remain isolated.
 
 Keys and settings are stored in Chrome's local extension storage on your device. Release builds do not include or use `config.js`.
 
@@ -114,7 +111,7 @@ Keys and settings are stored in Chrome's local extension storage on your device.
 - Independent Original, Simplified Chinese, and aligned bilingual views for Transcript, Overview, and Notes.
 - AI overviews, selected-text explanations, translation, and automatic note polishing.
 - Local notes and a local cache for recent transcript and digest results.
-- DeepSeek V4 Flash for all published AI features. Other providers require a local code adaptation and are not supported by this published version.
+- DeepSeek, OpenAI, Anthropic Claude, Google Gemini, OpenRouter, MiniMax, Xiaomi MiMo, and custom OpenAI-compatible endpoints for all published AI features.
 
 Shorts, live streams, private or access-restricted videos, and videos without an available native transcript may not work. Firefox, Safari, mobile browsers, and other Chromium browsers are not currently tested or supported.
 
@@ -132,7 +129,7 @@ The [Supadata transcript documentation](https://docs.supadata.ai/get-transcript)
 
 With the current native-only behavior, the free tier can cover roughly 100 transcript lookups per month when each request succeeds once. Retries and unavailable-caption lookups also consume credits, so actual successful-video coverage can be lower.
 
-DeepSeek usage is separate from Supadata. YouTube Digest does not collect payments or resell access. Set spending limits and monitor both accounts.
+AI Provider usage is separate from Supadata. YouTube Digest does not collect payments or resell access. Set spending limits and monitor every account you configure.
 
 ## DeepSeek V4 Flash pricing
 
@@ -169,18 +166,18 @@ YouTube Digest uses plain HTML, CSS, and JavaScript with no build step, so it is
 
 Ask your agent to preserve the bring-your-own-key model, keep secrets out of source files, run the checks below, and test the remix on real videos.
 
-If you want another AI provider or model, first open the exact YouTube Digest project folder that Chrome loaded through **Load unpacked** in your coding agent. Then open YouTube Digest Settings and use **Copy customization prompt**. Replace the `[PROVIDER]` and `[MODEL]` placeholders before sending it. Do not include any API key in the prompt or chat. After the agent updates your local copy, enter the key yourself in the Settings field it identifies.
+If a service does not offer an OpenAI-compatible API and is not one of the native built-in adapters, open the exact project folder that Chrome loaded through **Load unpacked** in your coding agent and use **Copy customization prompt**. Never include an API key in the prompt or chat.
 
 ## Privacy and data flow
 
 YouTube Digest makes provider requests directly from the extension:
 
 1. It sends a canonical YouTube watch URL to Supadata to request the native transcript.
-2. It sends the transcript and relevant video metadata to DeepSeek when you request AI features.
+2. It sends the transcript and relevant video metadata to the AI Provider card you currently enabled when you request AI features.
 3. Focused features send only the content they need, such as selected text with context or small transcript batches for translation.
 4. It stores keys, settings, notes, and recent cache entries locally in Chrome.
 
-There is no YouTube Digest account system, advertising, analytics, or telemetry. Supadata and DeepSeek still receive data under their own terms and privacy policies. See [PRIVACY.md](PRIVACY.md) for details.
+There is no YouTube Digest account system, advertising, analytics, or telemetry. Supadata and your enabled AI Provider still receive data under their own terms and privacy policies. See [PRIVACY.md](PRIVACY.md) for details.
 
 ## Troubleshooting
 
@@ -201,9 +198,9 @@ There is no YouTube Digest account system, advertising, analytics, or telemetry.
 
 ### YouTube Digest asks for setup
 
-- Open **Settings** and save both a Supadata key and a DeepSeek key.
-- This published version uses the fixed DeepSeek V4 Flash endpoint and model. There are no Base URL or Model fields to configure.
-- If Settings says a legacy custom provider was removed, enter a DeepSeek key. The old AI key was cleared so it could not be reused with the wrong service.
+- Open **Settings**, save a Supadata key, and add at least one configured AI Provider card.
+- Test the card's API address, key, and model, then make that card active.
+- Existing v1.3 DeepSeek settings migrate automatically. A legacy unsupported custom key remains cleared because its original service cannot be identified safely.
 
 ### No transcript is found
 
@@ -215,10 +212,9 @@ YouTube Digest will not fall back to generated transcription.
 
 ### AI requests fail
 
-- A `401` or `403` usually means the DeepSeek key or account access is invalid.
-- A `429` usually means a DeepSeek rate or spending limit was reached.
-- Confirm the key was created in the DeepSeek Platform account linked above and that the account has available credit.
-- If you adapted a local copy for another model, use the Settings customization prompt again and ask your coding agent to inspect that local implementation.
+- A `401` or `403` usually means the active Provider key or account access is invalid.
+- A `429` usually means that Provider's rate or spending limit was reached.
+- Reopen the active card in **Settings**, confirm its HTTPS endpoint and model, then run **Test connection**.
 
 Never share API keys, private transcripts, or personal notes in chats, screenshots, or logs.
 

@@ -25,12 +25,12 @@ There is no guaranteed response time or bug-bounty program. Please allow a reaso
 Examples include:
 
 - API keys or private content included in source, logs, screenshots, or release ZIPs;
-- requests to network origins outside the documented YouTube, Supadata, and DeepSeek hosts;
+- requests to network origins outside YouTube, Supadata, or an origin explicitly configured and approved on a Provider card;
 - script or HTML injection through transcript, metadata, service errors, or model output;
 - access to browsing data outside the documented YouTube scope;
 - unintended transmission of notes, transcripts, or credentials;
 - a dependency or release-workflow compromise; and
-- bypasses of local data deletion or DeepSeek configuration controls.
+- bypasses of local data deletion, Provider switching, connection-test, or optional host-permission controls.
 
 ## User security guidance
 
@@ -38,6 +38,7 @@ Examples include:
 - Review changes and the packaged file list before loading an update.
 - Use dedicated, scoped API keys where possible and set provider spending limits.
 - Do not reuse keys from production systems.
+- Verify every custom Provider HTTPS endpoint before granting Chrome access; a malicious endpoint receives content sent through that active profile.
 - Revoke keys immediately if a device, browser profile, ZIP, log, or screenshot exposes them.
 - Remember that Chrome local extension storage is not an encrypted password vault.
 

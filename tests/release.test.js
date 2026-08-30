@@ -23,10 +23,9 @@ test("manifest uses minimized install-time permissions", () => {
   assert.deepEqual(manifest.host_permissions, [
     "https://www.youtube.com/*",
     "https://api.supadata.ai/*",
-    "https://api.deepseek.com/*",
   ]);
-  assert.equal(Object.hasOwn(manifest, "optional_host_permissions"), false);
-  assert.equal(manifest.version, "1.3.0");
+  assert.deepEqual(manifest.optional_host_permissions, ["https://*/*"]);
+  assert.equal(manifest.version, "1.4.0");
   assert.equal(
     manifest.description,
     "将 YouTube 视频转化为包含字幕、双语翻译、人工智能概览和笔记的学习资源。",
@@ -34,7 +33,7 @@ test("manifest uses minimized install-time permissions", () => {
   assert.equal(manifest.action.default_title, "打开 YouTube Digest");
 });
 
-test("release copy documents the v1.3.0 scope and key safety", () => {
+test("release copy documents the v1.4.0 Provider scope and key safety", () => {
   const readme = read("README.md");
   const chineseReadme = read("README.zh-CN.md");
   const manifest = JSON.parse(read("manifest.json"));
@@ -105,8 +104,10 @@ test("release copy documents the v1.3.0 scope and key safety", () => {
     /不要把 API Key 发送到 AI 对话、源代码、截图或公开消息中。/,
   );
 
-  assert.match(readme, /^## New in v1\.3\.0$/m);
-  assert.match(chineseReadme, /^## 新版 v1\.3\.0$/m);
+  assert.match(readme, /^## New in v1\.4\.0$/m);
+  assert.match(chineseReadme, /^## 新版 v1\.4\.0$/m);
+  assert.match(readme, /DeepSeek, OpenAI, Anthropic Claude, Google Gemini, OpenRouter, MiniMax, and Xiaomi MiMo/);
+  assert.match(chineseReadme, /DeepSeek、OpenAI、Anthropic Claude、Google Gemini、OpenRouter、MiniMax 和小米 MiMo/);
   assert.match(
     readme,
     /Original[\s\S]*independently in \*\*Transcript\*\*, \*\*Overview\*\*, and \*\*Notes\*\*/,
@@ -165,9 +166,13 @@ test("release copy documents the v1.3.0 scope and key safety", () => {
   const optionsStyles = read("options.css");
   const optionsScript = read("options.js");
   assert.match(optionsPage, /dash\.supadata\.ai\/auth\/sign-up/i);
-  assert.match(optionsPage, /platform\.deepseek\.com\/api_keys/i);
   assert.doesNotMatch(optionsPage, /<select\b/i);
-  assert.doesNotMatch(optionsPage, /id="(?:provider|aiBaseUrl|aiModel)"/);
+  for (const preset of ["deepseek", "openai", "claude", "gemini", "openrouter", "minimax", "mimo", "custom"]) {
+    assert.match(optionsPage, new RegExp(`data-provider-preset="${preset}"`));
+  }
+  assert.match(optionsPage, /class="provider-key-input"/);
+  assert.match(optionsPage, /class="provider-test"/);
+  assert.match(optionsPage, /class="provider-enable primary"/);
   const detailsTag = optionsPage.match(
     /<details\b[^>]*class="card customization-card"[^>]*>/,
   );
@@ -205,11 +210,11 @@ test("release copy documents the v1.3.0 scope and key safety", () => {
   assert.match(readme, /vocabulary notebook/i);
   assert.match(
     readme,
-    /first open the exact YouTube Digest project folder that Chrome loaded through \*\*Load unpacked\*\* in your coding agent/,
+    /open the exact project folder that Chrome loaded through \*\*Load unpacked\*\* in your coding agent/,
   );
   assert.match(
     chineseReadme,
-    /先在编程 Agent 中打开 Chrome 通过“加载已解压的扩展程序”使用的那个准确的 YouTube Digest 项目文件夹/,
+    /在编程 Agent 中打开 Chrome 实际加载的项目文件夹/,
   );
 
   const publishedDocs = [
@@ -218,12 +223,10 @@ test("release copy documents the v1.3.0 scope and key safety", () => {
     read("PRIVACY.md"),
     read("SECURITY.md"),
   ].join("\n");
-  assert.doesNotMatch(publishedDocs, /custom OpenAI-compatible/i);
-  assert.doesNotMatch(publishedDocs, /optional custom-origin/i);
-  assert.doesNotMatch(publishedDocs, /chosen AI provider/i);
-  assert.doesNotMatch(publishedDocs, /configure a different OpenAI-compatible/i);
-  assert.match(readme, /published version supports DeepSeek V4 Flash as its only AI provider/i);
-  assert.match(chineseReadme, /发布版本只支持 DeepSeek V4 Flash/);
+  assert.match(publishedDocs, /custom OpenAI-compatible/i);
+  assert.match(publishedDocs, /optional HTTPS Provider host access/i);
+  assert.match(readme, /Test a Provider before using it/);
+  assert.match(chineseReadme, /使用前可以测试连接/);
 });
 
 test("product UI contains no emoji or emoji-like pictographs", () => {
