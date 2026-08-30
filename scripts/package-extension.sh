@@ -7,10 +7,16 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 check_script="$script_dir/check-release.sh"
 dist_dir="$repo_root/dist"
 
-command -v zip >/dev/null 2>&1 || {
-  printf 'Packaging failed: zip is required\n' >&2
+if command -v zip >/dev/null 2>&1; then
+  archive_tool="zip"
+elif [[ -x /c/Windows/System32/tar.exe ]] && command -v cygpath >/dev/null 2>&1; then
+  # Git Bash on Windows may omit zip, while Windows bsdtar can create a ZIP
+  # selected by the output extension.
+  archive_tool="windows-tar"
+else
+  printf 'Packaging failed: zip or Windows bsdtar is required\n' >&2
   exit 1
-}
+fi
 
 release_files=()
 while IFS= read -r file; do
@@ -47,7 +53,13 @@ trap cleanup EXIT
   cd "$repo_root"
   # Exclude platform-specific extra attributes so identical source files
   # produce the same archive checksum across repeated local builds.
-  zip -X -q "$temporary_zip" "${release_files[@]}"
+  if [[ "$archive_tool" == "zip" ]]; then
+    zip -X -q "$temporary_zip" "${release_files[@]}"
+  else
+    windows_zip="$(cygpath -w "$temporary_zip")"
+    MSYS2_ARG_CONV_EXCL="*" /c/Windows/System32/tar.exe \
+      -a -cf "$windows_zip" "${release_files[@]}"
+  fi
 )
 
 if unzip -Z1 "$temporary_zip" | grep -En '(^|/)(config\.js|\.DS_Store|\.git)(/|$)' >&2; then
